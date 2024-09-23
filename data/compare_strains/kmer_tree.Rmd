@@ -1,0 +1,47 @@
+
+
+```{r kmer_tree}
+library(hpgltools)
+library(dplyr)
+files <- c("lbraziliensis_2904_v46.fasta", "lpanamensis_v36.fasta", "strain_12588_modified_z21.fasta",
+           "strain_2272_modified_z22.fasta", "lpanamensis_psc1_v46.fasta", "strain_12444_modified_z24.fasta",
+           "strain_2168_modified_z23.fasta")
+
+count_lst <- list()
+sequence_vectors <- list()
+sequence_set <- c()
+filenames <- c()
+count <- 0
+for (f in files) {
+  count <- count + 1
+  filename <- gsub(x=f, pattern="\\.fna", replacement="")
+  message("Reading ", filename)
+  raw <- Rsamtools::FaFile(f)
+  seq <- Biostrings::getSeq(raw)
+  test <- as.vector(seq)
+  single_vector <- ""
+  for (v in test) {
+    single_vector <- paste0(single_vector, v)
+  }
+  sequence_vectors[[filename]] <- single_vector
+  sequence_set <- c(sequence_set, single_vector)
+  filenames <- c(filenames, filename)
+}
+
+dnastring_test <- Biostrings::DNAStringSet(sequence_set)
+shortened <- gsub(x=filenames, pattern="\\.fasta$", replacement="")
+names(dnastring_test) <- shortened
+dnastring_dnabin <- ape::as.DNAbin(dnastring_test)
+test_dist <- kmer::kdistance(dnastring_dnabin, k=7)
+test_phy <- ape::nj(test_dist) %>%
+  ape::root("lpanamensis_psc1_v46") %>%
+  ape::ladderize()
+
+test_dnd <- as.dendrogram(test_phy)
+test_phylo <- ape::as.phylo(test_dnd) %>%
+  ape::compute.brlen()
+
+plot(test_phylo, type = "cladogram")
+plot(test_phylo, type = "phylogram", root.edge=TRUE)
+
+```

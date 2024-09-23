@@ -1,0 +1,1538 @@
+---
+title: "TMRC2 `r Sys.getenv('VERSION')`: Visualizing Analyses before DE/variant analyses"
+author: "atb abelew@gmail.com"
+date: "`r Sys.Date()`"
+bibliography: atb.bib
+output:
+  html_document:
+    code_download: true
+    code_folding: show
+    fig_caption: true
+    fig_height: 9
+    fig_width: 9
+    highlight: zenburn
+    keep_md: false
+    mode: selfcontained
+    number_sections: true
+    self_contained: true
+    theme: readable
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+---
+
+<style type="text/css">
+body .main-container {
+  max-width: 1600px;
+}
+body, td {
+  font-size: 16px;
+}
+code.r{
+  font-size: 16px;
+}
+pre {
+  font-size: 16px
+}
+</style>
+
+```{r, include = FALSE}
+library(Heatplus)
+library(hpgltools)
+library(ggplot2)
+library(dplyr)
+library(CMplot)
+library(glue)
+library(GenomicRanges)
+library(ggbio)
+library(ggplot2)
+
+knitr::opts_knit$set(progress = TRUE, verbose = TRUE, width = 90, echo = TRUE)
+knitr::opts_chunk$set(
+  error = TRUE, fig.width = 9, fig.height = 9, fig.retina = 2,
+  out.width = "100%", dev = "png",
+  dev.args = list(png = list(type = "cairo-png")))
+old_options <- options(digits = 4, stringsAsFactors = FALSE, knitr.duplicate.label = "allow")
+ggplot2::theme_set(ggplot2::theme_bw(base_size = 12))
+ver <- Sys.getenv("VERSION")
+previous_file <- ""
+rundate <- format(Sys.Date(), format = "%Y%m%d")
+
+## tmp <- try(sm(loadme(filename = gsub(pattern = "\\.Rmd", replace = "\\.rda\\.xz", x = previous_file))))
+rmd_file <- "02pre_visualization.Rmd"
+savefile <- gsub(pattern = "\\.Rmd", replace = "\\.rda\\.xz", x = rmd_file)
+loaded <- load(file = glue("rda/tmrc2_data_structures-v{ver}.rda"))
+```
+
+# Introduction
+
+This document will visualize the TMRC2 samples before completing the various differential
+expression and variant analyses in the hopes of getting an understanding of how the various
+samples relate to each other.
+
+## Initial library size
+
+Start off with the library sizes of the original dataset.  The main
+thing to note is that we have quite a large variance in coverage.  A
+few of these samples are highly likely to be removed shortly (looking
+at you, TMRC20001 and TMRC20095)
+
+```{r}
+libsizes <- plot_libsize(lp_expt)
+libsizes
+dev <- pp("images/lp_expt_libsizes.png", width = 18, height = 9)
+libsizes$plot
+closed <- dev.off()
+```
+
+Library sizes of the protein coding gene counts observed per sample.
+The samples were mapped with the EuPathDB revision 36 of the
+Leishmania (Viannia) panamensis strain MHOM/COL/81L13 genome; the
+alignments were sorted, indexed, and counted via htseq using the gene
+features, and non-protein coding features were excluded.
+The per-sample sums of the remaining matrix were plotted to check that
+the relative sample coverage is sufficient and not too divergent
+across samples.  Bars are colored according to strain/zymodeme
+annotation: red: zymodeme 2.3; blue: zymodeme 2.2; Leishmania
+braziliensis-like strains b2904, z1.0, and z1.5: purple; zymodemes
+which are most similar to 2.3, comprising z2.4 is light brown;
+zymodemes most similar to 2.2, comprising z3.0, z2.0, z2.1, and z3.2
+are light gray, dark gray, dark brown, and gray respectively.
+
+## Non-zero genes with respect to coverage
+
+This plot is usually our primary arbiter for sample removing based on
+coverage.  We pick a semi-arbitrary cutoff based on both coverage and
+genes observed.  In this instance 8,600 genes seems likely?
+
+The cutoff argument prints out samples with gene coverage < that
+proportion.  I think we already dropped in the sample sheet the most
+problematic samples, so it may not actually print anything.
+
+```{r}
+## I think samples 7,10 should be removed at minimum, probably also 9,11
+nonzero <- plot_nonzero(lp_expt, cutoff = 0.7)
+nonzero
+dev <- pp(file = "images/lp_nonzero.png", width = 9, height = 9)
+nonzero$plot
+closed <- dev.off()
+```
+
+Differences in relative gene content with respect to sequencing
+coverage.  The per-sample number of observed genes was plotted with
+respect to the relative CPM coverage in order to check that the
+samples are sufficiently and similarly diverse.  Many samples were
+observed near or at the putative asymptote of likely gene content; no
+samples were observed with fewer than 65% of the Leishmania panamensis
+genes included.  Note that the range of genes observed is quite small,
+8500 <= x < 8700 genes, however this was plotted after already
+excluding samples with fewer than 8500 genes observed (of which there
+were 2) and any samples with fewer than 5 million protein coding
+mapped reads (there were 2 samples that had more than 8500 genes
+observed in less than 5 million reads).
+
+```{r}
+lp_box <- plot_boxplot(lp_expt)
+dev <- pp(file = "images/lp_expt_boxplot.png", width = 16, height = 9)
+lp_box
+closed <- dev.off()
+lp_box
+```
+
+The distribution of observed counts / gene for all samples was plotted
+as a boxplot on the log2 (it looks like it is log10, but I checked)
+scale.  In contrast to host transcriptome distribution, the parasite
+distribution of reads/gene is log-normal.
+
+```{r}
+filter_plot <- plot_libsize_prepost(lp_expt)
+filter_plot$lowgene_plot
+filter_plot$count_plot
+```
+
+The numbers of genes removed by low-count filtering is drastically
+lower in parasite samples than human.  Thus, even though the range of
+coverage for the parasite samples is from near 0 to ~ 150 CPM, the
+number of genes removed by the default low-count filter ranges only
+from 40 to 129, and the number of reads associated with them ranges
+only from 100 to 3168.
+
+```{r}
+table(pData(lp_expt)[["zymodemecategorical"]])
+table(pData(lp_expt)[["clinicalresponse"]])
+```
+
+## Distribution Visualizations
+
+Najib's favorite plots are of course the PCA/TNSE.  These are nice to look at in
+order to get a sense of the relationships between samples.  They also provide a
+good opportunity to see what happens when one applies different normalizations,
+surrogate analyses, filters, etc.  In addition, one may set different
+experimental factors as the primary 'condition' (usually the color of plots) and
+surrogate 'batches'.
+
+## By Susceptilibity
+
+Column 'Q' in the sample sheet, make a categorical version of it with these parameters:
+
+* 0 <= x <= 35 is resistant
+* 36 <= x <= 48 is ambiguous
+* 49 <= x is sensitive
+
+```{r}
+strain_norm <- normalize_expt(lp_strain, norm = "quant", transform = "log2",
+                              convert = "cpm", filter = TRUE)
+zymo_pca <- plot_pca(strain_norm, plot_title = "PCA of parasite expression values",
+                     plot_labels = FALSE)
+zymo_pca
+dev <- pp(file = "figures/promastigote_zymocol_sensshape_z21_to_z24.pdf")
+zymo_pca$plot
+closed <- dev.off()
+
+lp_strain_known <- subset_expt(lp_strain, subset = "clinicalcategorical!='unknown'")
+strain_known_norm <- normalize_expt(lp_strain_known, norm = "quant", transform = "log2",
+                                    convert = "cpm", filter = TRUE)
+zymo_known_pca <- plot_pca(strain_known_norm, plot_title = "PCA of parasite expression values",
+                           plot_labels = FALSE)
+zymo_known_pca
+dev <- pp(file = "figures/promastigote_zymocol_sensshape_z21_to_z24_only_known_clinical.pdf")
+zymo_known_pca$plot
+closed <- dev.off()
+```
+
+## Limit to three strains: 2.1/2.2/2.3
+
+```{r}
+only_three_types <- subset_expt(lp_strain, subset = "condition=='z2.1'|condition=='z2.3'|condition=='z2.2'")
+only_three_norm <- normalize_expt(only_three_types, norm = "quant", transform = "log2",
+                                  convert = "cpm", batch = FALSE, filter = TRUE) %>%
+  set_expt_batches(fact = "phase")
+onlythree_pca <- plot_pca(only_three_norm, plot_title = "PCA of z2.1, z2.2 and z2.3 parasite expression values",
+                          plot_labels = FALSE)
+pp(file = "images/promastigote_threetypes_zymocol_noshape.png")
+onlythree_pca$plot
+dev.off()
+onlythree_pca$plot
+```
+
+## By my ML knn classifier!
+
+I added the result from my kmer classifier to the sample sheet, let us
+see how that looks.
+
+```{r}
+lp_strain_knn <- set_expt_conditions(lp_strain, fact = "knnv2classification")
+strain_norm_knn <- normalize_expt(lp_strain_knn, norm = "quant", transform = "log2",
+                                  convert = "cpm", filter = TRUE)
+zymo_pca_knn <- plot_pca(strain_norm_knn, plot_title = "PCA of parasite expression values",
+                         plot_labels = FALSE)
+plotly::ggplotly(zymo_pca_knn$plot)
+dev <- pp(file = "images/promastigote_zymocol_sensshape_knnv2.png")
+zymo_pca_knn$plot
+closed <- dev.off()
+zymo_pca_knn$plot
+
+strain_nobatch <- set_expt_batches(strain_norm, fact = "sourcelab")
+zymo_pcav2 <- plot_pca(strain_nobatch, plot_title = "PCA of parasite expression values",
+                       plot_labels = FALSE)
+dev <- pp(file = "images/promastigote_zymocol_nobatch.png")
+zymo_pcav2$plot
+closed <- dev.off()
+zymo_pcav2$plot
+
+strain_nb <- normalize_expt(lp_strain, convert = "cpm", transform = "log2",
+                            filter = TRUE, batch = "svaseq")
+strain_nb_pca <- plot_pca(strain_nb, plot_title = "PCA of parasite expression values",
+                          plot_labels = FALSE)
+dev <- pp(file = "images/clinical_nb_pca_sus_shape.png")
+strain_nb_pca$plot
+closed <- dev.off()
+strain_nb_pca
+```
+
+Add explicit labels for a few reference strains:
+
+* TMRC20023: Excluded due to coverage (only 7k reads)
+* TMRC20006: This one has 19,815,673 reads, but a weirdly small number of genes and got excluded.
+* TMRC20029: This has 1,946,986 reads and so was excluded.
+* TMRC20034: Not sequenced
+
+** NOTE ** These samples were all removed from examination in the
+_sample_sheet_ in 202404 and so will not appear in this plot.  Thus I
+am turning off the following block.
+
+```{r, eval=FALSE}
+samples_to_label <- tolower(c("TMRC20023", "TMRC20006", "TMRC20029", "TMRC20007", "TMRC20034",
+                              "TMRC20008", "TMRC20027", "TMRC20028", "TMRC20032", "TMRC20040"))
+
+label_entries <- zymo_pca$table[samples_to_label, ]
+zymo_pca$plot +
+  geom_text(mapping = aes_string("x" = "PC1", "y" = "PC2", label = "sampleid"),
+            data = label_entries)
+```
+
+Some likely text for a figure legend might include something like the
+following (paraphrased from Najib's 2016 dual transcriptome profiling
+paper (10.1128/mBio.00027-16)):
+
+Expression profiles of the promastigote samples across multiple
+strains. Each glyph represents one sample, colors delineate the
+various strains and fall into two primary clades.  Red samples are
+zymodeme 2.3, blue samples are zymodeme 2.2.  The difference between
+these two primary groups make up approximately 17% of the variance in
+the PCA.  Purple samples are Leishmania braziliensis or zymodeme
+1.0/1.5 samples, orange are z2.4, browns and greys are z2.1, z2.0,
+z3.0, and z3.2 respectively.  This analysis was performed following a
+low-count filter, cpm conversion, quantile normalization, and a log2
+transformation.  No batch factor was used, nor was a surrogate
+variable estimation performed.
+
+Some interpretation for this figure might include:
+
+When PCA was performed on the promastigote samples, the dominant (but
+still relatively small amount of variance) component observed
+coincided with the two primary strain groups, zymodeme 2.2 and 2.3.
+With the exception of some Leishmania braziliensis samples, all
+promatigote samples assayed fell into one of these two categories.
+
+When surrogate varialbe estimation was performed on the entire set of
+samples, it increased the apparent strain-dependent variance, but had
+some potentially problematic effects for a couple of samples (one z2.3
+sample now lies with the other z2.2 samples); it is assumed that this
+is because sva attempted to estimate surrogate values for the
+less-represented strains with some unintended consequences for sample
+TMRC20095 (which, along with TMRC20008 are the two least covered
+samples by a significant margin); this hypothesis may be tested by
+excluding the braziliensis and non-z2.2/2.3 samples and repeating
+(when this is performed later in the document, the difference between
+the two primary clades increases to 49.33% of the variance and there
+are no odd samples).
+
+```{r}
+zymo_tsne <- plot_tsne(strain_norm, plot_title = "TSNE of parasite expression values")
+zymo_tsne$plot
+
+strain_nb_tsne <- plot_tsne(strain_nb, plot_title = "TSNE of parasite expression values")
+strain_nb_tsne$plot
+
+corheat <- plot_corheat(strain_norm, plot_title = "Correlation heatmap of parasite
+                 expression values
+")
+corheat$plot
+
+disheat <- plot_disheat(strain_norm, plot_title = "Distance heatmap of parasite
+                 expression values
+")
+disheat$plot
+
+plot_sm(strain_norm)$plot
+```
+
+Potential start for a figure legend:
+
+Global relationships among the promastigote transcriptional
+profiles.  Pairwise pearson correlations and Euclidean distances were
+calculated using the normalized expression matrices.  Colors along the
+top row delineate the experimental conditions (same colors as the PCA)
+Samples were clustered by nearest neighbor clustering and each colored
+tile describes one correlation value between two samples (red to white
+delineates pearson correlation values of the 8,710 normalized gene
+values between two samples ranging from <= 0.7 to >= 1.0) or
+the euclidean distance between two samples (dark blue to white
+delineates identical to a normalized euclidean distance of >= 110).
+
+Some interpretation for this figure might include:
+
+When the global relationships among the samples were distilled down to
+individual euclidean distances or pearson correlation coefficients
+between pairs of samples, the primary clustering among samples
+observed was according to strain.  The primary significant outlier
+sample (TMRC20095) is explicitly due to low coverage.  The other
+outlier strains are either braziliensis (purple) or a series of
+strains which, when viewed in IGV, appear to have genetic variants
+which bridge the differences between the two primary zymodemes,
+particularly on the known aneuploid chromosomes.
+
+## Limit to just two strains: 2.2/2.3
+
+```{r}
+lp_two_strains_norm <- sm(normalize_expt(lp_zymo, norm = "quant", transform = "log2",
+                                         convert = "cpm", batch = FALSE, filter = TRUE))
+onlytwo_pca <- plot_pca(lp_two_strains_norm, plot_title = "PCA of z2.2 and z2.3 parasite expression values",
+                        plot_labels = FALSE)
+dev <- pp(file = "figures/zymo_z2.2_z2.3_pca_sus_shape.pdf")
+onlytwo_pca$plot
+closed <- dev.off()
+onlytwo_pca$plot
+
+lp_two_strains_known <- subset_expt(lp_zymo, subset = "clinicalcategorical!='unknown'")
+lp_two_strains_known_norm <- sm(normalize_expt(lp_two_strains_known, norm = "quant", transform = "log2",
+                                               convert = "cpm", batch = FALSE, filter = TRUE))
+onlytwo_known_pca <- plot_pca(lp_two_strains_known_norm, plot_title = "PCA of z2.2 and z2.3 parasite expression values",
+                              plot_labels = FALSE)
+dev <- pp(file = "figures/zymo_z2.2_z2.3_pca_sus_shape_only_known.pdf")
+onlytwo_pca$plot
+closed <- dev.off()
+onlytwo_pca$plot
+
+lp_two_strains_nb <- normalize_expt(lp_zymo, norm = "quant", transform = "log2",
+                                    convert = "cpm", batch = "svaseq", filter = TRUE)
+onlytwo_pca_nb <- plot_pca(lp_two_strains_nb, plot_title = "PCA of z2.2 and z2.3 parasite expression values",
+                           plot_labels = FALSE)
+dev <- pp(file = "images/zymo_z2.2_z2.3_pca_sus_shape_nb.pdf")
+onlytwo_pca_nb$plot
+closed <- dev.off()
+onlytwo_pca_nb$plot
+```
+
+## By Cure/Fail status
+
+This is by far the most problematic comparison, I think the only
+interpretation of the following images is that the parasite has little
+effect on the likelihood that a person will successfully end
+treatment.  There does appear to be some variance associated with
+cure/fail, but only in a few samples (visible in ~10 fail samples and
+perhaps ~8 cure samples when sva is applied to the data).
+
+```{r}
+cf_norm <- normalize_expt(lp_cf, convert = "cpm", transform = "log2",
+                          norm = "quant", filter = TRUE)
+start_cf <- plot_pca(cf_norm, plot_title = "PCA of parasite expression values",
+                     plot_labels = FALSE)
+dev <- pp(file = "figures/cure_fail_sus_shape_all.pdf")
+start_cf$plot
+closed <- dev.off()
+start_cf
+
+lp_cf_known <- subset_expt(lp_cf, subset = "clinicalcategorical!='unknown'")
+cf_known_norm <- normalize_expt(lp_cf_known, convert = "cpm", transform = "log2",
+                                norm = "quant", filter = TRUE)
+start_cf_known <- plot_pca(cf_known_norm, plot_title = "PCA of parasite expression values",
+                           plot_labels = FALSE)
+dev <- pp(file = "figures/cure_fail_sus_shape_known.pdf")
+start_cf_known$plot
+closed <- dev.off()
+start_cf_known
+
+only_two_cf <- set_expt_conditions(lp_zymo, fact = "clinicalcategorical") %>%
+  set_expt_batches(fact = "sus_category_current") %>%
+  set_expt_colors(color_choices[["cf"]])
+
+only_two_cf_norm <- normalize_expt(only_two_cf, norm = "quant", transform = "log2",
+                                   convert = "cpm", batch = FALSE, filter = TRUE)
+only_two_cf_pca <- plot_pca(only_two_cf_norm, plot_title = "PCA of z2.2 and z2.3 parasite expression values",
+                            plot_labels = FALSE)
+dev <- pp(file = "figures/cure_fail_sus_shape_onlyz22_z23.pdf")
+only_two_cf_pca$plot
+dev.off()
+only_two_cf_pca
+
+only_two_cf_known <- subset_expt(only_two_cf, subset = "condition!='unknown'")
+only_two_cf_known_norm <- normalize_expt(only_two_cf_known, norm = "quant", transform = "log2",
+                                         convert = "cpm", batch = FALSE, filter = TRUE)
+only_two_cf_known_pca <- plot_pca(only_two_cf_known_norm,
+                                  plot_title = "PCA of z2.2 and z2.3 parasite expression values",
+                                  plot_labels = FALSE)
+dev <- pp(file = "figures/cure_fail_sus_shape_onlyz22_z23_known.pdf")
+only_two_cf_known_pca$plot
+dev.off()
+only_two_cf_known_pca
+
+cf_nb <- normalize_expt(lp_cf, convert = "cpm", transform = "log2",
+                        filter = TRUE, batch = "svaseq")
+cf_nb_pca <- plot_pca(cf_nb, plot_title = "PCA of parasite expression values",
+                      plot_labels = FALSE)
+dev <- pp(file = "images/cf_sus_share_nb.png")
+cf_nb_pca$plot
+closed <- dev.off()
+cf_nb_pca
+
+cf_norm <- normalize_expt(lp_cf, transform = "log2", convert = "cpm",
+                          filter = TRUE, norm = "quant")
+test <- pca_information(cf_norm,
+                        expt_factors = c("clinicalcategorical", "zymodemecategorical",
+                                         "pathogenstrain", "passagenumber"),
+                        num_components = 6, plot_pcas = TRUE)
+test$anova_p
+test$cor_heatmap
+```
+
+## By Current drug sensitivity assay data
+
+We have two competing metrics of antmonial sensitivity; one historical
+and one current.  In both cases there is a reasonable expectation that
+resistant strains tend to be zymodeme 2.3 and sensitive strains tend
+to be zymodeme 2.2.  There appear to be more exceptions to this rule
+of thumb in the current data than the historical.
+
+```{r}
+sus_norm <- normalize_expt(lp_susceptibility, transform = "log2", convert = "cpm",
+                           norm = "quant", filter = TRUE)
+sus_pca <- plot_pca(sus_norm, plot_title = "PCA of parasite expression values",
+                    plot_labels = FALSE)
+dev <- pp(file = "figures/sus_norm_pca.pdf")
+sus_pca[["plot"]]
+closed <- dev.off()
+sus_pca
+
+lp_susceptibility_known <- subset_expt(lp_susceptibility, subset = "batch!='unknown'")
+sus_known_norm <- normalize_expt(lp_susceptibility_known, transform = "log2", convert = "cpm",
+                                 norm = "quant", filter = TRUE)
+sus_known_pca <- plot_pca(sus_known_norm, plot_title = "PCA of parasite expression values",
+                          plot_labels = FALSE)
+dev <- pp(file = "figures/sus_norm_known_pca.pdf")
+sus_known_pca[["plot"]]
+closed <- dev.off()
+sus_known_pca
+
+lp_sus_two <- subset_expt(lp_susceptibility, subset = "zymodemecategorical!='z21'") %>%
+  subset_expt(subset = "zymodemecategorical!='z24'")
+sus_two_norm <- normalize_expt(lp_sus_two, transform = "log2", convert = "cpm",
+                               norm = "quant", filter = TRUE)
+sus_two_pca <- plot_pca(sus_two_norm, plot_title = "PCA of parasite expression values",
+                        plot_labels = FALSE)
+dev <- pp(file = "figures/sus_norm_two_pca.pdf")
+sus_two_pca[["plot"]]
+closed <- dev.off()
+sus_two_pca
+
+lp_sus_two_known <- subset_expt(lp_sus_two, subset = "clinicalcategorical!='unknown'")
+sus_two_known_norm <- normalize_expt(lp_sus_two_known, transform = "log2", convert = "cpm",
+                                     norm = "quant", filter = TRUE)
+sus_two_known_pca <- plot_pca(sus_two_known_norm, plot_title = "PCA of parasite expression values",
+                              plot_labels = FALSE)
+dev <- pp(file = "figures/sus_norm_two_known_pca.pdf")
+sus_two_known_pca[["plot"]]
+closed <- dev.off()
+sus_two_known_pca
+
+sus_nb <- normalize_expt(lp_susceptibility, transform = "log2", convert = "cpm",
+                         batch = "svaseq", filter = TRUE)
+sus_nb_pca <- plot_pca(sus_nb, plot_title = "PCA of parasite expression values",
+                       plot_labels = FALSE)
+dev <- pp(file = "images/sus_nb_pca.png")
+sus_nb_pca[["plot"]]
+closed <- dev.off()
+sus_nb_pca
+```
+
+## By Historical drug sensitivity assay data
+
+```{r}
+sus_hist_norm <- normalize_expt(lp_susceptibility_historical, transform = "log2", convert = "cpm",
+                                norm = "quant", filter = TRUE)
+sus_hist_pca <- plot_pca(sus_hist_norm, plot_title = "PCA of parasite expression values",
+                         plot_labels = FALSE)
+dev <- pp(file = "images/sus_hist_norm_pca.png")
+sus_hist_pca[["plot"]]
+closed <- dev.off()
+sus_hist_pca
+
+sus_hist_nb <- normalize_expt(lp_susceptibility_historical, transform = "log2", convert = "cpm",
+                              batch = "svaseq", filter = TRUE)
+sus_hist_nb_pca <- plot_pca(sus_hist_nb, plot_title = "PCA of parasite expression values",
+                            plot_labels = FALSE)
+dev <- pp(file = "images/sus_hist_nb_pca.png")
+sus_hist_nb_pca[["plot"]]
+closed <- dev.off()
+sus_hist_nb_pca
+```
+
+## Zymodeme enzyme gene IDs
+
+Najib read me an email listing off the gene names associated with the zymodeme
+classification.  I took those names and cross referenced them against the
+Leishmania panamensis gene annotations and found the following:
+
+They are:
+
+1. ALAT: LPAL13_120010900 -- alanine aminotransferase
+2. ASAT: LPAL13_340013000 -- aspartate aminotransferase
+3. G6PD: LPAL13_000054100 -- glucase-6-phosphate 1-dehydrogenase
+4. NH: LPAL13_14006100, LPAL13_180018500 -- inosine-guanine nucleoside hydrolase
+5. MPI: LPAL13_320022300 (maybe) -- mannose phosphate isomerase (I chose phosphomannose isomerase)
+
+Given these 6 gene IDs (NH has two gene IDs associated with it), I can do some
+looking for specific differences among the various samples.
+
+### Expression levels of zymodeme genes
+
+The following creates a colorspace (red to green) heatmap showing the observed
+expression of these genes in every sample.
+
+```{r}
+my_genes <- c("LPAL13_120010900", "LPAL13_340013000", "LPAL13_000054100",
+              "LPAL13_140006100", "LPAL13_180018500", "LPAL13_320022300",
+              "other")
+my_names <- c("ALAT", "ASAT", "G6PD", "NHv1", "NHv2", "MPI", "other")
+
+zymo_expt <- exclude_genes_expt(strain_norm, ids = my_genes, method = "keep")
+zymo_heatmap <- plot_sample_heatmap(zymo_expt, row_label = my_names)
+zymo_heatmap
+```
+
+A recent suggestion included a query about the relationship of our
+amastigote TMRC2 samples which were the result of infecting a set of
+macrophages vs. these promastigote samples.
+
+So far, we have kept these two experiments separate, now let us merge them.
+
+```{r}
+tmrc2_macrophage_norm <- normalize_expt(lp_macrophage, transform = "log2", convert = "cpm",
+                                        norm = "quant", filter = TRUE)
+
+## Hey you, this annotation call should be made automatic for the container!
+annotation(lp_expt) <- "org.Lpanamensis.MHOMCOL81L13.v46.eg.db"
+annotation(lp_macrophage) <- annotation(lp_expt)
+all_tmrc2 <- combine_expts(lp_expt, lp_macrophage)
+```
+
+Before we can use the combined data, we must reconcile a few of
+aspects of it, notably we need to specify which samples are
+amastigotes and which are promastigotes.
+
+```{r}
+all_nosb <- all_tmrc2
+pData(all_nosb)[["stage"]] <- "promastigote"
+na_idx <- is.na(pData(all_nosb)[["macrophagetreatment"]])
+pData(all_nosb)[na_idx, "macrophagetreatment"] <- "undefined"
+all_nosb <- subset_expt(all_nosb, subset = "macrophagetreatment!='inf_sb'")
+ama_idx <- pData(all_nosb)[["macrophagetreatment"]] == "inf"
+pData(all_nosb)[ama_idx, "stage" ] <- "amastigote"
+
+## Make sure that the zymodeme does not have the inf_ prefix.
+zymodeme_char <- gsub(x = pData(all_nosb)[["condition"]], pattern = "^inf_", replacement = "")
+pData(all_nosb)[["condition"]] <- zymodeme_char
+
+pData(all_nosb)[["batch"]] <- pData(all_nosb)[["stage"]]
+all_norm <- normalize_expt(all_nosb, convert = "cpm", norm = "quant",
+                           transform = "log2", filter = TRUE)
+pro_ama_pca <- plot_pca(all_norm)
+pro_ama_pca[["plot"]]
+```
+
+I think the above picture is sort of the opposite of what we want to
+compare in a DE analysis for this set of data, e.g. we want to compare
+promastigotes from amastigotes?
+
+```{r}
+two_nosb <- set_expt_batches(all_nosb, fact = "condition") %>%
+  set_expt_conditions(fact = "stage") %>%
+  subset_expt(subset = "batch=='z2.2'|batch=='z2.3'")
+
+two_norm <- normalize_expt(two_nosb, convert = "cpm", norm = "quant",
+                           transform = "log2", filter = TRUE)
+pro_ama_two_pca <- plot_pca(two_norm)
+pro_ama_two_pca[["plot"]]
+
+zy_stage_factor <- paste0(pData(two_nosb)[["batch"]], "_",
+                          pData(two_nosb)[["stage"]])
+pData(two_nosb)[["zystage"]] <- zy_stage_factor
+zystage <- set_expt_conditions(two_nosb, fact = "zystage")
+
+zystage_norm <- normalize_expt(zystage, filter = TRUE, norm = "quant",
+                               convert = "cpm", transform = "log2")
+plot_pca(zystage_norm)$plot
+
+zystage_keepers <- list(
+  "z2322_ama" = c("z23amastigote", "z22amastigote"),
+  "z2322_pro" = c("z23promastigote", "z22promastigote"),
+  "proama_z23" = c("z23amastigote", "z23promastigote"),
+  "proama_z22" = c("z22amastigote", "z22promastigote"))
+
+zystage_de <- all_pairwise(zystage, filter = TRUE, model_batch = "svaseq")
+
+zystage_tables <- combine_de_tables(
+  zystage_de, keepers = zystage_keepers,
+  excel = glue("excel/zymodeme_stage_table-v{ver}.xlsx"))
+```
+
+# Gene expression with respect to chromosome
+
+I want to make a plot where the x-axis is the number of genes on a chromosome and the
+y-axis is the mean of the expression of those genes.
+
+```{r}
+exprs_by_chr_plot <- plot_exprs_by_chromosome(lp_zymo)
+exprs_by_chr_plot[["plot"]]
+```
+
+# SNP profiles
+
+One potentially interesting aspect of the variant data: it may be able
+to help us define the zymodeme state of previous, untested samples.
+
+In order to test this, I am loading some of the 2016 data alongside
+the new TMRC2 data to see if they fit together.
+
+This is using an older dataset for which I am not sure we have
+permissions to include in the container, so I am turning them off for
+now.
+
+```{r, eval=FALSE}
+old_expt <- create_expt("sample_sheets/tmrc2_samples_20191203.xlsx",
+                        file_column = "tophat2file")
+
+tt <- old_expt$expressionset
+rownames(tt) <- gsub(pattern = "^exon_", replacement = "", x = rownames(tt))
+rownames(tt) <- gsub(pattern = "\\.1$", replacement = "", x = rownames(tt))
+old_expt$expressionset <- tt
+rm(tt)
+```
+
+## Create the SNP expressionset
+
+One other important caveat, we have a group of new samples which have
+not yet run through the variant search pipeline, so I need to remove
+them from consideration.  Though it looks like they finished overnight...
+
+In the non-containerized version of this document, the following block
+combines an older dataset with the current data.
+
+```{r}
+both_norm <- normalize_expt(new_snps, transform = "log2", norm = "quant") %>%
+  set_expt_conditions(fact = "pathogenstrain")
+```
+
+The data structure 'both_norm' now contains our 2016 data along with
+the newer data collected since 2019.
+
+## Plot of SNP profiles for zymodemes
+
+The following plot shows the SNP profiles of all samples (old and new) where the
+colors at the top show either the 2.2 strains (orange), 2.3 strains (green), the
+previous samples (purple), or the various lab strains (pink etc).
+
+```{r}
+new_variant_heatmap <- plot_disheat(new_snps)
+dev <- pp(file = "images/raw_snp_disheat.png", height = 12, width = 12)
+new_variant_heatmap$plot
+closed <- dev.off()
+new_variant_heatmap$plot
+```
+
+The function get_snp_sets() takes the provided metadata factor (in
+this case 'condition') and looks for variants which are exclusive to
+each element in it.  In this case, this is looking for differences
+between 2.2 and 2.3, as well as the set shared among them.
+
+```{r}
+snp_sets <- get_snp_sets(new_snps, factor = "condition")
+snp_sets
+##Biobase::annotation(old_expt$expressionset) = Biobase::annotation(lp_expt$expressionset)
+##both_expt <- combine_expts(lp_expt, old_expt)
+
+snp_genes <- sm(snps_vs_genes(lp_expt, snp_sets, expt_name_col = "chromosome"))
+snp_genes
+## I think we have some metrics here we can plot...
+snp_subset <- snp_subset_genes(
+  lp_expt, new_snps,
+  genes = c("LPAL13_120010900", "LPAL13_340013000", "LPAL13_000054100",
+            "LPAL13_140006100", "LPAL13_180018500", "LPAL13_320022300"))
+zymo_heat <- plot_sample_heatmap(snp_subset, row_label = rownames(exprs(snp_subset)))
+zymo_heat
+```
+
+## Compare variants to DE genes
+
+Najib has asked a few times about the relationship between variants
+and DE genes.  In subsequent conversations I figured out what he
+really wants to learn is variants in the UTR (most likely 5') which
+might affect expression of genes.  The following explicitly does not
+help this question, but is a paralog: is there a relationship between
+variants in the CDS and differential expression?
+
+### Collect DE data
+
+In order to do this comparison, we need to reload some of the DE results.
+
+These blocks need to be moved to post-differential analyses
+
+```{r reload_de_results, eval=FALSE}
+rda <- glue("rda/zymo_tables_sva-v{ver}.rda")
+varname <- gsub(x = basename(rda), pattern = "\\.rda", replacement = "")
+loaded <- load(file = rda)
+zy_df <- get0(varname)[["data"]][["zymodeme"]]
+```
+
+```{r variants_vs_de, eval=FALSE}
+vars_df <- data.frame(ID = names(snp_genes$summary_by_gene), variants = as.numeric(snp_genes$summary_by_gene))
+vars_df[["variants"]] <- log2(vars_df[["variants"]] + 1)
+vars_by_de_gene <- merge(zy_df, vars_df, by.x = "row.names", by.y = "ID")
+cor.test(vars_by_de_gene$deseq_logfc, vars_by_de_gene$variants)
+variants_wrt_logfc <- plot_linear_scatter(vars_by_de_gene[, c("deseq_logfc", "variants")])
+variants_wrt_logfc$scatter
+## It looks like there might be some genes of interest, even though this is not actually
+## the question of interest.
+```
+
+Didn't I create a set of densities by chromosome?
+Oh I think they come in from get_snp_sets()
+
+## SNPS associated with clinical response in the TMRC samples
+
+```{r}
+clinical_sets <- get_snp_sets(new_snps, factor = "clinicalresponse")
+clinical_sets
+
+density_vec <- clinical_sets[["density"]]
+chromosome_idx <- grep(pattern = "LpaL", x = names(density_vec))
+density_df <- as.data.frame(density_vec[chromosome_idx])
+density_df[["chr"]] <- rownames(density_df)
+colnames(density_df) <- c("density_vec", "chr")
+var_den_chr <- ggplot(density_df, aes(x = chr, y = density_vec)) +
+  ggplot2::geom_col() +
+  ggplot2::theme(axis.text = ggplot2::element_text(size = 10, colour = "black"),
+                 axis.text.x = ggplot2::element_text(angle = 90, vjust = 0.5))
+var_den_chr
+pp(file = "figures/variant_density_by_chromosome.pdf")
+var_den_chr
+dev.off()
+## oops, forgot to export write_snps...  fixed.
+clinical_written <- write_snps(new_snps, output_file = "clinical_variants.aln")
+```
+
+### Cross reference these variants by gene
+
+```{r}
+clinical_genes <- snps_vs_genes(lp_expt, clinical_sets, expt_name_col = "chromosome")
+
+snp_density <- merge(as.data.frame(clinical_genes[["summary"]]),
+                     as.data.frame(fData(lp_expt)),
+                     by = "row.names")
+snp_density <- snp_density[, c(1, 2, 4, 15)]
+colnames(snp_density) <- c("name", "snps", "product", "length")
+snp_density[["product"]] <- tolower(snp_density[["product"]])
+snp_density[["length"]] <- as.numeric(snp_density[["length"]])
+snp_density[["density"]] <- as.numeric(snp_density[["snps"]]) / snp_density[["length"]]
+snp_idx <- order(snp_density[["density"]], decreasing = TRUE)
+snp_density <- snp_density[snp_idx, ]
+
+removers <- c("amastin", "gp63", "leishmanolysin")
+for (r in removers) {
+  drop_idx <- grepl(pattern = r, x = snp_density[["product"]])
+  snp_density <- snp_density[!drop_idx, ]
+}
+## Filter these for [A|a]mastin gp63 Leishmanolysin
+```
+
+Let us grab out the number of variants/gene for the cure/fail samples,
+merge them into a dataframe, and add that to the gene annotations for
+the lp_expt datastructure.
+
+```{r}
+clinical_snps <- snps_intersections(lp_expt, clinical_sets, chr_column = "chromosome")
+
+fail_ref_snps <- as.data.frame(clinical_snps[["inters"]][["failure, reference strain"]])
+fail_ref_snps <- rbind(fail_ref_snps,
+                       as.data.frame(clinical_snps[["inters"]][["failure"]]))
+cure_snps <- as.data.frame(clinical_snps[["inters"]][["cure"]])
+
+head(fail_ref_snps)
+head(cure_snps)
+write.csv(file = "excel/cure_variants.txt", x = rownames(cure_snps))
+write.csv(file = "excel/fail_variants.txt", x = rownames(fail_ref_snps))
+
+annot <- fData(lp_expt)
+clinical_interest_cure <- as.data.frame(clinical_snps[["gene_summaries"]][["cure"]])
+summary(clinical_interest_cure)
+clinical_interest_fail <- as.data.frame(clinical_snps[["gene_summaries"]][["failure"]])
+summary(clinical_interest_fail)
+
+clinical_interest <- merge(clinical_interest_cure,
+                           clinical_interest_fail,
+                           by = "row.names", all = TRUE)
+
+rownames(clinical_interest) <- clinical_interest[["Row.names"]]
+clinical_interest[["Row.names"]] <- NULL
+colnames(clinical_interest) <- c("cure_snps", "fail_snps")
+clinical_annot <- merge(annot, clinical_interest, by = "row.names")
+rownames(annot) <- annot[["Row.names"]]
+annot[["Row.names"]] <- NULL
+dim(annot)
+dim(fData(lp_expt))
+fData(lp_expt) <- annot
+```
+
+# Zymodeme for new samples
+
+The heatmap produced here should show the variants only for the zymodeme genes.
+
+## Hunt for snp clusters
+
+I am thinking that if we find clusters of locations which are variant, that
+might provide some PCR testing possibilities.
+
+```{r}
+## Drop the 2.1, 2.4, unknown, and null
+pruned_snps <- subset_expt(new_snps, subset = "condition=='z2.2'|condition=='z2.3'")
+new_sets <- get_snp_sets(pruned_snps, factor = "zymodemecategorical")
+summary(new_sets)
+## 1000000: 2.2
+## 0100000: 2.3
+
+summary(new_sets[["intersections"]][["10"]])
+write.csv(file = "excel/variants_22.csv", x = new_sets[["intersections"]][["10"]])
+summary(new_sets[["intersections"]][["01"]])
+write.csv(file = "excel/variants_23.csv", x = new_sets[["intersections"]][["01"]])
+```
+
+Thus we see that there are 3,553 variants associated with 2.2 and
+81,589 associated with 2.3.
+
+### A small function for searching for potential PCR primers
+
+The following function uses the positional data to look for sequential
+mismatches associated with zymodeme in the hopes that there will be
+some regions which would provide good potential targets for a
+PCR-based assay.
+
+```{r sequential_search, eval=FALSE}
+sequential_variants <- function(snp_sets, conditions = NULL, minimum = 3, maximum_separation = 3) {
+  if (is.null(conditions)) {
+    conditions <- 1
+  }
+  intersection_sets <- snp_sets[["intersections"]]
+  intersection_names <- snp_sets[["set_names"]]
+  chosen_intersection <- 1
+  if (is.numeric(conditions)) {
+    chosen_intersection <- conditions
+  } else {
+    intersection_idx <- intersection_names == conditions
+    chosen_intersection <- names(intersection_names)[intersection_idx]
+  }
+
+  possible_positions <- intersection_sets[[chosen_intersection]]
+  position_table <- data.frame(row.names = possible_positions)
+  pat <- "^chr_(.+)_pos_(.+)_ref_.*$"
+  position_table[["chr"]] <- gsub(pattern = pat, replacement = "\\1", x = rownames(position_table))
+  position_table[["pos"]] <- as.numeric(gsub(pattern = pat, replacement = "\\2", x = rownames(position_table)))
+  position_idx <- order(position_table[, "chr"], position_table[, "pos"])
+  position_table <- position_table[position_idx, ]
+  position_table[["dist"]] <- 0
+
+  last_chr <- ""
+  for (r in 1:nrow(position_table)) {
+    this_chr <- position_table[r, "chr"]
+    if (r == 1) {
+      position_table[r, "dist"] <- position_table[r, "pos"]
+      last_chr <- this_chr
+      next
+    }
+    if (this_chr == last_chr) {
+      position_table[r, "dist"] <- position_table[r, "pos"] - position_table[r - 1, "pos"]
+    } else {
+      position_table[r, "dist"] <- position_table[r, "pos"]
+    }
+    last_chr <- this_chr
+  }
+
+  ## Working interactively here.
+
+  doubles <- position_table[["dist"]] == 1
+  doubles <- position_table[doubles, ]
+  write.csv(doubles, "doubles.csv")
+
+  one_away <- position_table[["dist"]] == 2
+  one_away <- position_table[one_away, ]
+  write.csv(one_away, "one_away.csv")
+
+  two_away <- position_table[["dist"]] == 3
+  two_away <- position_table[two_away, ]
+  write.csv(two_away, "two_away.csv")
+
+  combined <- rbind(doubles, one_away)
+  combined <- rbind(combined, two_away)
+  position_idx <- order(combined[, "chr"], combined[, "pos"])
+  combined <- combined[position_idx, ]
+
+  this_chr <- ""
+  for (r in 1:nrow(combined)) {
+    this_chr <- combined[r, "chr"]
+    if (r == 1) {
+      combined[r, "dist_pair"] <- combined[r, "pos"]
+      last_chr <- this_chr
+      next
+    }
+    if (this_chr == last_chr) {
+      combined[r, "dist_pair"] <- combined[r, "pos"] - combined[r - 1, "pos"]
+    } else {
+      combined[r, "dist_pair"] <- combined[r, "pos"]
+    }
+    last_chr <- this_chr
+  }
+
+  dist_pair_maximum <- 1000
+  dist_pair_minimum <- 200
+  dist_pair_idx <- combined[["dist_pair"]] <= dist_pair_maximum &
+    combined[["dist_pair"]] >= dist_pair_minimum
+  remaining <- combined[dist_pair_idx, ]
+  no_weak_idx <- grepl(pattern = "ref_(G|C)", x = rownames(remaining))
+  remaining <- remaining[no_weak_idx, ]
+
+  print(head(table(position_table[["dist"]])))
+  sequentials <- position_table[["dist"]] <= maximum_separation
+  message("There are ", sum(sequentials), " candidate regions.")
+
+  ## The following can tell me how many runs of each length occurred, that is not quite what I want.
+  ## Now use run length encoding to find the set of sequential sequentials!
+  rle_result <- rle(sequentials)
+  rle_values <- rle_result[["values"]]
+  ## The following line is equivalent to just leaving values alone:
+  ## true_values <- rle_result[["values"]] == TRUE
+  rle_lengths <- rle_result[["lengths"]]
+  true_sequentials <- rle_lengths[rle_values]
+  rle_idx <- cumsum(rle_lengths)[which(rle_values)]
+
+  position_table[["last_sequential"]] <- 0
+  count <- 0
+  for (r in rle_idx) {
+    count <- count + 1
+    position_table[r, "last_sequential"] <- true_sequentials[count]
+  }
+  message("The maximum sequential set is: ", max(position_table[["last_sequential"]]), ".")
+
+  wanted_idx <- position_table[["last_sequential"]] >= minimum
+  wanted <- position_table[wanted_idx, c("chr", "pos")]
+  return(wanted)
+}
+
+zymo22_sequentials <- sequential_variants(new_sets, conditions = "z22",
+                                          minimum = 1, maximum_separation = 2)
+dim(zymo22_sequentials)
+## 7 candidate regions for zymodeme 2.2 -- thus I am betting that the reference strain is a 2.2
+zymo23_sequentials <- sequential_variants(new_sets, conditions = "z23",
+                                          minimum = 2, maximum_separation = 2)
+dim(zymo23_sequentials)
+## In contrast, there are lots (587) of interesting regions for 2.3!
+```
+
+### Extract a promising region from the genome
+
+The first 4 candidate regions from my set of remaining:
+* Chr       Pos.   Distance
+* LpaL13-15 238433 448
+* LpaL13-18 142844 613
+* LpaL13-29 830342 252
+* LpaL13-33 1331507 843
+
+Lets define a couple of terms:
+* Third: Each of the 4 above positions.
+* Second: Third - Distance
+* End: Third + PrimerLen
+* Start: Second - Primerlen
+
+In each instance, these are the last positions, so we want to grab three things:
+
+* The entire region from End -> Start, this way we can have a quick sanity check.
+* Start -> Second.
+* (Third -> End) <- Reverse complemented
+
+```{r extract_bsgenome, eval=FALSE}
+## * LpaL13-15 238433 448
+first_candidate_chr <- lp_genome[["LpaL13_15"]]
+primer_length <- 22
+amplicon_length <- 448
+first_candidate_third <- 238433
+first_candidate_second <- first_candidate_third - amplicon_length
+first_candidate_start <- first_candidate_second - primer_length
+first_candidate_end <- first_candidate_third + primer_length
+first_candidate_region <- subseq(first_candidate_chr, first_candidate_start, first_candidate_end)
+first_candidate_region
+first_candidate_5p <- subseq(first_candidate_chr, first_candidate_start, first_candidate_second)
+as.character(first_candidate_5p)
+first_candidate_3p <- spgs::reverseComplement(subseq(first_candidate_chr, first_candidate_third, first_candidate_end))
+first_candidate_3p
+
+## * LpaL13-18 142844 613
+second_candidate_chr <- lp_genome[["LpaL13_18"]]
+primer_length <- 22
+amplicon_length <- 613
+second_candidate_third <- 142844
+second_candidate_second <- second_candidate_third - amplicon_length
+second_candidate_start <- second_candidate_second - primer_length
+second_candidate_end <- second_candidate_third + primer_length
+second_candidate_region <- subseq(second_candidate_chr, second_candidate_start, second_candidate_end)
+second_candidate_region
+second_candidate_5p <- subseq(second_candidate_chr, second_candidate_start, second_candidate_second)
+as.character(second_candidate_5p)
+second_candidate_3p <- spgs::reverseComplement(subseq(second_candidate_chr, second_candidate_third, second_candidate_end))
+second_candidate_3p
+
+
+## * LpaL13-29 830342 252
+third_candidate_chr <- lp_genome[["LpaL13_29"]]
+primer_length <- 22
+amplicon_length <- 252
+third_candidate_third <- 830342
+third_candidate_second <- third_candidate_third - amplicon_length
+third_candidate_start <- third_candidate_second - primer_length
+third_candidate_end <- third_candidate_third + primer_length
+third_candidate_region <- subseq(third_candidate_chr, third_candidate_start, third_candidate_end)
+third_candidate_region
+third_candidate_5p <- subseq(third_candidate_chr, third_candidate_start, third_candidate_second)
+as.character(third_candidate_5p)
+third_candidate_3p <- spgs::reverseComplement(subseq(third_candidate_chr, third_candidate_third, third_candidate_end))
+third_candidate_3p
+## You are a garbage polypyrimidine tract.
+## Which is actually interesting if the mutations mess it up.
+
+
+## * LpaL13-33 1331507 843
+fourth_candidate_chr <- lp_genome[["LpaL13_33"]]
+primer_length <- 22
+amplicon_length <- 843
+fourth_candidate_third <- 1331507
+fourth_candidate_second <- fourth_candidate_third - amplicon_length
+fourth_candidate_start <- fourth_candidate_second - primer_length
+fourth_candidate_end <- fourth_candidate_third + primer_length
+fourth_candidate_region <- subseq(fourth_candidate_chr, fourth_candidate_start, fourth_candidate_end)
+fourth_candidate_region
+fourth_candidate_5p <- subseq(fourth_candidate_chr, fourth_candidate_start, fourth_candidate_second)
+as.character(fourth_candidate_5p)
+fourth_candidate_3p <- spgs::reverseComplement(subseq(fourth_candidate_chr, fourth_candidate_third, fourth_candidate_end))
+fourth_candidate_3p
+```
+
+## Go hunting for Sanger sequencing regions
+
+I made a fun little function which should find regions which have lots of variants
+associated with a given experimental factor.
+
+```{r}
+pheno <- subset_expt(lp_expt, subset = "condition=='z2.2'|condition=='z2.3'")
+pheno <- subset_expt(pheno, subset = "!is.na(pData(pheno)[['bcftable']])")
+pheno_snps <- count_expt_snps(pheno, annot_column = "freebayessummary", snp_column="PAIRED")
+##pheno_snps <- sm(count_expt_snps(pheno, annot_column = "bcftable"))
+```
+
+## SNP Density Primers
+
+I cannot run the following block in the container unless/until I copy
+the gff into it...
+
+```{r, eval=FALSE}
+fun_stuff <- snp_density_primers(
+  pheno_snps,
+  bsgenome = "BSGenome.Leishmania.panamensis.MHOMCOL81L13.v53",
+  gff = "reference/TriTrypDB-53_LpanamensisMHOMCOL81L13.gff")
+drop_scaffolds <- grepl(x = rownames(fun_stuff$favorites), pattern = "SCAF")
+favorite_primer_regions <- fun_stuff[["favorites"]][!drop_scaffolds, ]
+favorite_primer_regions[["bin"]] <- rownames(favorite_primer_regions)
+
+favorite_primer_regions <- favorite_primer_regions %>%
+  relocate(bin)
+```
+
+## Combine this table with 2.2/2.3 genes
+
+Here is my note from our meeting:
+
+Cross reference primers to DE genes of 2.2/2.3 and/or resistance/suscpetible,
+add a column to the primer spreadsheet with the DE genes (in retrospect I am guessing
+this actually means to put the logFC as a column.
+
+One nice thing, I did a semantic removal on the lp_expt, so the set of logFC/pvalues
+should not have any of the offending types; thus I should be able to automagically
+get rid of them in the merge.
+
+This block needs to go after differential expression analyses.
+
+```{r, eval=FALSE}
+logfc <- zy_table_sva[["data"]][["z23_vs_z22"]]
+logfc_columns <- logfc[, c("deseq_logfc", "deseq_adjp")]
+colnames(logfc_columns) <- c("z23_logfc", "z23_adjp")
+new_table <- merge(favorite_primer_regions, logfc_columns,
+                   by.x = "closest_gene_before_id", by.y = "row.names")
+sus <- sus_table_sva[["data"]][["sensitive_vs_resistant"]]
+sus_columns <- sus[, c("deseq_logfc", "deseq_adjp")]
+colnames(sus_columns) <- c("sus_logfc", "sus_adjp")
+new_table <- merge(new_table, sus_columns,
+                   by.x = "closest_gene_before_id", by.y = "row.names") %>%
+  relocate(bin)
+written <- write_xlsx(data = new_table,
+                      excel = "excel/favorite_primers_xref_zy_sus.xlsx")
+```
+
+
+## Make a heatmap describing the clustering of variants
+
+We can cross reference the variants against the zymodeme status and
+plot a heatmap of the results and hopefully see how they separate.
+
+```{r}
+snp_genes <- sm(snps_vs_genes(lp_expt, new_sets, expt_name_col = "chromosome"))
+
+clinical_colors_v2 <- list(
+  "z22" = "#0000cc",
+  "z23" = "#cc0000")
+new_zymo_norm <- normalize_expt(pruned_snps, norm = "quant") %>%
+  set_expt_conditions(fact = "zymodemecategorical") %>%
+  set_expt_colors(clinical_colors_v2)
+
+zymo_heat <- plot_disheat(new_zymo_norm)
+dev <- pp(file = "images/onlyz22_z23_snp_heatmap.pdf", width = 12, height = 12)
+zymo_heat[["plot"]]
+closed <- dev.off()
+zymo_heat
+```
+
+### Annotated heatmap of variants
+
+Now let us try to make a heatmap which includes some of the annotation data.
+
+```{r}
+des <- pData(both_norm)
+undef_idx <- is.na(des[["pathogenstrain"]])
+des[undef_idx, "pathogenstrain"] <- "unknown"
+
+##hmcols <- colorRampPalette(c("yellow","black","darkblue"))(256)
+correlations <- hpgl_cor(exprs(both_norm))
+na_idx <- is.na(correlations)
+correlations[na_idx] <- 0
+
+## Make an initial heatmap via plot_disheat, which may get used as the figure:
+initial_snps <- set_expt_conditions(both_norm, fact = "zymodemereference", colors = color_choices[["strain"]])
+initial_disheat <- plot_disheat(both_norm)
+dev <- pp(file = "figures/initial_snp_heatmap.pdf", width = 20, height = 20)
+initial_disheat[["plot"]]
+closed <- dev.off()
+zymo_heat
+
+zymo_missing_idx <- is.na(des[["zymodemecategorical"]])
+des[["zymodemecategorical"]] <- as.character(des[["zymodemecategorical"]])
+des[["clinicalcategorical"]] <- as.character(des[["clinicalcategorical"]])
+des[zymo_missing_idx, "zymodemecategorical"] <- "unknown"
+mydendro <- list(
+  "clustfun" = hclust,
+  "lwd" = 2.0)
+col_data <- as.data.frame(des[, c("zymodemecategorical")])
+unknown_clinical <- is.na(des[["clinicalcategorical"]])
+colnames(col_data) <- c("zymodeme")
+
+row_data <- as.data.frame(des[, c("sus_category_current", "clinicalcategorical")])
+colnames(row_data) <- c("susceptibility", "outcome")
+row_data[unknown_clinical, "outcome"] <- "undefined"
+
+myannot <- list(
+  "Col" = list("data" = col_data),
+  "Row" = list("data" = row_data))
+myclust <- list("cuth" = 1.0,
+                "col" = BrewerClusterCol)
+mylabs <- list(
+  "Row" = list("nrow" = 4),
+  "Col" = list("nrow" = 4))
+hmcols <- colorRampPalette(c("darkblue", "beige"))(240)
+zymo_annot_heat <- annHeatmap2(
+  correlations,
+  dendrogram = mydendro,
+  annotation = myannot,
+  cluster = myclust,
+  labels = mylabs,
+  ## The following controls if the picture is symmetric
+  scale = "none",
+  col = hmcols)
+
+dev <- pp(file = "images/dendro_heatmap.pdf", height = 20, width = 20)
+plot(zymo_annot_heat)
+closed <- dev.off()
+plot(zymo_annot_heat)
+```
+
+Print the larger heatmap so that all the labels appear.  Keep in mind
+that as we get more samples, this image needs to continue getting
+bigger.
+
+### CMplot karyogram of variants
+
+I cannot run the following block until/unless I install cmplot in the
+container.  Oh, I did!  Let us run it and see what happens.
+
+```{r}
+xref_prop <- table(pheno_snps[["conditions"]])
+pheno_snps$conditions
+idx_tbl <- exprs(pheno_snps) > 5
+new_tbl <- data.frame(row.names = rownames(exprs(pheno_snps)))
+for (n in names(xref_prop)) {
+  new_tbl[[n]] <- 0
+  idx_cols <- which(pheno_snps[["conditions"]] == n)
+  prop_col <- rowSums(idx_tbl[, idx_cols]) / xref_prop[n]
+  new_tbl[n] <- prop_col
+}
+keepers <- grepl(x = rownames(new_tbl), pattern = "LpaL13")
+new_tbl <- new_tbl[keepers, ]
+new_tbl[["strong22"]] <- 1.001 - new_tbl[["z2.2"]]
+new_tbl[["strong23"]] <- 1.001 - new_tbl[["z2.3"]]
+s22_na <- new_tbl[["strong22"]] > 1
+new_tbl[s22_na, "strong22"] <- 1
+s23_na <- new_tbl[["strong23"]] > 1
+new_tbl[s23_na, "strong23"] <- 1
+
+new_tbl[["SNP"]] <- rownames(new_tbl)
+new_tbl[["Chromosome"]] <- gsub(x = new_tbl[["SNP"]], pattern = "chr_(.*)_pos_.*", replacement = "\\1")
+new_tbl[["Position"]] <- gsub(x = new_tbl[["SNP"]], pattern = ".*_pos_(\\d+)_.*", replacement = "\\1")
+new_tbl <- new_tbl[, c("SNP", "Chromosome", "Position", "strong22", "strong23")]
+
+simplify <- new_tbl
+simplify[["strong22"]] <- NULL
+
+CMplot(new_tbl, bin.size = 10000, threshold = c(0.01, 0.05), plot.type = "d",
+       file.name = "variant_density_10k")
+CMplot(new_tbl, bin.size = 1000, threshold = c(0.01, 0.05), plot.type = "d",
+       file.name = "variant_density_1k")
+CMplot(new_tbl, bin.size = 100000, threshold = c(0.01, 0.05), plot.type = "d",
+       file.name = "variant_density_100k")
+
+CMplot(new_tbl, plot.type = "m", multracks = TRUE, threshold = c(0.01, 0.05),
+       threshold.lwd = c(1,1), threshold.col = c("black","grey"),
+       amplify = TRUE, bin.size = 1000,
+       chr.den.col = c("darkgreen", "yellow", "red"),
+       signal.col = c("red", "green", "blue"),
+       signal.cex = 1, file = "jpg", dpi = 300, file.output = TRUE, verbose = TRUE)
+```
+
+![SNP Density](Marker_Density.variant_density_10k.jpg)
+
+# A different karyogram
+
+I have been a bit frustrated with the clunkyness of cmplot, so I did
+some reading and found autoplot.  It makes use of g/iranges to plot
+arbitrary data and as such has the potential to be significantly more
+generally useful than cmplot.  I think I will be able to use it to
+view a lot of interesting different data types.  In this instance I
+want to plot density of variants associated with various conditions in
+the data (z2.3/z2.2, cure/fail, whatever).  In addition, it might be
+nice to have the ORFs displayed in some fashion (space permitting).
+
+```{r}
+lp_entry <- get_eupath_entry(species = "MHOM/COL", metadata = meta)
+
+## These lines cannot run in the container because it cannot write
+##txdb_pkgname <- make_eupath_txdb(lp_entry)
+##grange_name <- make_eupath_granges(lp_entry)
+grange_name <- gsub(x = lp_entry[["GrangesPkg"]], pattern = "\\.rda$", replacement = "")
+grange_filename <- file.path("build", lp_entry[["GrangesPkg"]])
+if (file.exists(grange_filename)) {
+  load(grange_filename)
+} else {
+  created <- dir.create("build/gff", recursive = TRUE)
+  grange_build <- make_eupath_granges(lp_entry)
+  grange_filename <- grange_build[["rda"]]
+  load(grange_filename)
+}
+grange_data <- get0(grange_name)
+
+scaffold_idx <- grepl(x = as.character(seqnames(grange_data)), pattern = "SCAF")
+no_scaffolds <- grange_data[!scaffold_idx]
+scaffold_idx <- grepl(x = as.character(names(seqinfo(grange_data))), pattern = "SCAF")
+chr_names <- names(seqinfo(grange_data))[!scaffold_idx]
+no_scaffolds <- seqinfo(grange_data)[chr_names]
+
+auto_tbl <- new_tbl
+auto_tbl[["position2"]] <- auto_tbl[["Position"]]
+auto_tbl[["SNP"]] <- NULL
+rownames(auto_tbl) <- NULL
+
+tilesize <- 1000
+bins_1k <- GenomicRanges::tileGenome(seqlengths(no_scaffolds), tilewidth = 1000,
+                                     cut.last.tile.in.chrom = TRUE)
+bins_5k <- GenomicRanges::tileGenome(seqlengths(no_scaffolds), tilewidth = 5000,
+                                     cut.last.tile.in.chrom = TRUE)
+bins_10k <- GenomicRanges::tileGenome(seqlengths(no_scaffolds), tilewidth = 10000,
+                                  cut.last.tile.in.chrom = TRUE)
+bins_1nt <- GenomicRanges::tileGenome(seqlengths(no_scaffolds), tilewidth = 1,
+                                      cut.last.tile.in.chrom = TRUE)
+auto_tbl[["strand"]] <- "+"
+## I want to calculate the number of intersecting positions between my auto_tbl and the 1k bins.
+start <- auto_tbl[, c("Chromosome", "Position", "position2", "strand", "strong23")]
+colnames(start) <- c("chr", "start", "end", "strand", "z23")
+start[["chr"]] <- gsub(x = start[["chr"]], pattern = "-", replacement = "_")
+var_grange <- makeGRangesFromDataFrame(start, seqinfo = no_scaffolds, keep.extra.columns = TRUE)
+vars_per_bin <- findOverlaps(bins_1k, var_grange)
+vars_per_bin_numeric <- as.data.frame(bins_1k)
+vars_per_bin_numeric[["bin"]] <- rownames(vars_per_bin_numeric)
+
+count_per_bin <- as.data.frame(vars_per_bin) %>%
+  group_by(queryHits) %>%
+  dplyr::tally()
+colnames(count_per_bin) <- c("bin", "num")
+vars_per_bin_numeric <- merge(vars_per_bin_numeric, count_per_bin, by = "bin", all.x = TRUE)
+missing_idx <- is.na(vars_per_bin_numeric[["num"]])
+vars_per_bin_numeric[missing_idx, "num"] <- 0
+vars_per_bin <- vars_per_bin_numeric[, c("seqnames", "start", "end", "width", "strand", "num")]
+vpb_grange <- makeGRangesFromDataFrame(vars_per_bin, seqinfo = no_scaffolds, keep.extra.columns = TRUE)
+
+kary <- autoplot(vpb_grange, layout = "karyogram", aes(color = num, fill = num)) +
+  scale_color_gradient(low = "blue", high = "red") +
+  scale_fill_gradient(low = "blue", high = "red")
+## theme_bw(base_size = 10) +
+pp(file = "karyogram_by_variants.pdf", height = 24, width = 18)
+kary
+dev.off()
+
+var_kary <- ggbio() +
+  layout_karyogram(vpb_grange, aes(color = num, fill = num)) +
+  scale_fill_gradient(low = "blue", high = "white") +
+  scale_color_gradient(low = "blue", high = "white") +
+  theme_bw(base_size = 10)
+var_kary
+```
+
+
+<!---
+![SNP Density](SNP-Density.ratio.jpg)
+![Circular Manhattan](Circular-Manhattan.ratio.jpg)
+![Rectangular Manhattan](Rectangular-Manhattan.ratio.jpg)
+![QQ](QQplot.ratio.jpg)
+--->
+
+## Try out MatrixEQTL
+
+This tool looks a little opaque, but provides sample data with things
+that make sense to me and should be pretty easy to recapitulate in our
+data.
+
+1.  covariates.txt: Columns are samples, rows are things from pData -- the
+most likely ones of interest for our data would be zymodeme,
+sensitivity
+2.  geneloc.txt: columns are 'geneid', 'chr', 'left', 'right'.  I
+guess I can assume left and right are start/stop; in which case
+this is trivially acquirable from fData.
+3.  ge.txt: This appears to be a log(rpkm/cpm) table with rows as genes and
+columns as samples
+4.  snpsloc.txt: columns are 'snpid', 'chr', 'pos'
+5.  snps.txt: columns are samples, rows are the ids from snsploc,
+values a 0,1,2.  I assume 0 is identical and 1..12 are the various
+A->TGC T->AGC C->AGT G->ACT
+
+```{r matrixeqtl, eval=FALSE}
+## For this, let us use the 'new_snps' data structure.
+## Caveat here: these need to be coerced to numbers.
+my_covariates <- pData(new_snps)[, c("zymodemecategorical", "clinicalcategorical")]
+for (col in colnames(my_covariates)) {
+  my_covariates[[col]] <- as.numeric(as.factor(my_covariates[[col]]))
+}
+my_covariates <- t(my_covariates)
+
+my_geneloc <- fData(lp_expt)[, c("gid", "chromosome", "start", "end")]
+colnames(my_geneloc) <- c("geneid", "chr", "left", "right")
+
+my_ge <- exprs(normalize_expt(lp_expt, transform = "log2", filter = TRUE, convert = "cpm"))
+used_samples <- tolower(colnames(my_ge)) %in% colnames(exprs(new_snps))
+my_ge <- my_ge[, used_samples]
+
+my_snpsloc <- data.frame(rownames = rownames(exprs(new_snps)))
+## Oh, caveat here: Because of the way I stored the data,
+## I could have duplicate rows which presumably will make matrixEQTL sad
+my_snpsloc[["chr"]] <- gsub(pattern = "^chr_(.+)_pos(.+)_ref_.*$", replacement = "\\1",
+                            x = rownames(my_snpsloc))
+my_snpsloc[["pos"]] <- gsub(pattern = "^chr_(.+)_pos(.+)_ref_.*$", replacement = "\\2",
+                            x = rownames(my_snpsloc))
+test <- duplicated(my_snpsloc)
+## Each duplicated row would be another variant at that position;
+## so in theory we would do a rle to number them I am guessing
+## However, I do not have different variants so I think I can ignore this for the moment
+## but will need to make my matrix either 0 or 1.
+if (sum(test) > 0) {
+  message("There are: ", sum(duplicated), " duplicated entries.")
+  keep_idx <- ! test
+  my_snpsloc <- my_snpsloc[keep_idx, ]
+}
+
+my_snps <- exprs(new_snps)
+one_idx <- my_snps > 0
+my_snps[one_idx] <- 1
+
+## Ok, at this point I think I have all the pieces which this method wants...
+## Oh, no I guess not; it actually wants the data as a set of filenames...
+library(MatrixEQTL)
+write.table(my_snps, "eqtl/snps.tsv", na = "NA", col.names = TRUE, row.names = TRUE, sep = "\t", quote = TRUE)
+## readr::write_tsv(my_snps, "eqtl/snps.tsv", )
+write.table(my_snpsloc, "eqtl/snpsloc.tsv", na = "NA", col.names = TRUE, row.names = TRUE, sep = "\t", quote = TRUE)
+## readr::write_tsv(my_snpsloc, "eqtl/snpsloc.tsv")
+write.table(as.data.frame(my_ge), "eqtl/ge.tsv", na = "NA", col.names = TRUE, row.names = TRUE, sep = "\t", quote = TRUE)
+## readr::write_tsv(as.data.frame(my_ge), "eqtl/ge.tsv")
+write.table(as.data.frame(my_geneloc), "eqtl/geneloc.tsv", na = "NA", col.names = TRUE, row.names = TRUE, sep = "\t", quote = TRUE)
+## readr::write_tsv(as.data.frame(my_geneloc), "eqtl/geneloc.tsv")
+write.table(as.data.frame(my_covariates), "eqtl/covariates.tsv", na = "NA", col.names = TRUE, row.names = TRUE, sep = "\t", quote = TRUE)
+## readr::write_tsv(as.data.frame(my_covariates), "eqtl/covariates.tsv")
+
+useModel = modelLINEAR # modelANOVA, modelLINEAR, or modelLINEAR_CROSS
+
+# Genotype file name
+SNP_file_name = "eqtl/snps.tsv"
+snps_location_file_name = "eqtl/snpsloc.tsv"
+expression_file_name = "eqtl/ge.tsv"
+gene_location_file_name = "eqtl/geneloc.tsv"
+covariates_file_name = "eqtl/covariates.tsv"
+# Output file name
+output_file_name_cis = tempfile()
+output_file_name_tra = tempfile()
+# Only associations significant at this level will be saved
+pvOutputThreshold_cis = 0.1
+pvOutputThreshold_tra = 0.1
+# Error covariance matrix
+# Set to numeric() for identity.
+errorCovariance = numeric()
+# errorCovariance = read.table("Sample_Data/errorCovariance.txt");
+# Distance for local gene-SNP pairs
+cisDist = 1e6
+## Load genotype data
+snps = SlicedData$new()
+snps$fileDelimiter = "\t"      # the TAB character
+snps$fileOmitCharacters = "NA" # denote missing values;
+snps$fileSkipRows = 1          # one row of column labels
+snps$fileSkipColumns = 1       # one column of row labels
+snps$fileSliceSize = 2000      # read file in slices of 2,000 rows
+snps$LoadFile(SNP_file_name)
+## Load gene expression data
+gene = SlicedData$new()
+gene$fileDelimiter = "\t"      # the TAB character
+gene$fileOmitCharacters = "NA" # denote missing values;
+gene$fileSkipRows = 1          # one row of column labels
+gene$fileSkipColumns = 1       # one column of row labels
+gene$fileSliceSize = 2000      # read file in slices of 2,000 rows
+gene$LoadFile(expression_file_name)
+## Load covariates
+cvrt = SlicedData$new()
+cvrt$fileDelimiter = "\t"      # the TAB character
+cvrt$fileOmitCharacters = "NA" # denote missing values;
+cvrt$fileSkipRows = 1          # one row of column labels
+cvrt$fileSkipColumns = 1       # one column of row labels
+if(length(covariates_file_name) > 0) {
+  cvrt$LoadFile(covariates_file_name)
+}
+## Run the analysis
+snpspos = read.table(snps_location_file_name, header = TRUE, stringsAsFactors = FALSE)
+genepos = read.table(gene_location_file_name, header = TRUE, stringsAsFactors = FALSE)
+
+me = Matrix_eQTL_main(
+  snps = snps,
+  gene = gene,
+  cvrt = cvrt,
+  output_file_name = output_file_name_tra,
+  pvOutputThreshold = pvOutputThreshold_tra,
+  useModel = useModel,
+  errorCovariance = errorCovariance,
+  verbose = TRUE,
+  output_file_name.cis = output_file_name_cis,
+  pvOutputThreshold.cis = pvOutputThreshold_cis,
+  snpspos = snpspos,
+  genepos = genepos,
+  cisDist = cisDist,
+  pvalue.hist = "qqplot",
+  min.pv.by.genesnp = FALSE,
+  noFDRsaveMemory = FALSE);
+```
+
+```{r saveme}
+pander::pander(sessionInfo())
+message(paste0("This is hpgltools commit: ", get_git_commit()))
+##message(paste0("Saving to ", savefile))
+## tmp <- sm(saveme(filename = savefile))
+```
+
+```{r loadme_after, eval = FALSE}
+tmp <- loame(filename = savefile)
+```

@@ -1,0 +1,128 @@
+Bootstrap: docker
+From: debian:stable
+
+## Order of sections:
+## %labels:      unknown, storing metadata
+## %files:       are before %post or installation procedures.
+## %setup:       in the host-system after base OS install.
+## %post:        in the container after base OS install.
+## %test:        run at end of build process.
+## %environment: sourced at runtime, not build; if needed at build, do it in %post.
+## %runscript:   writes the container file /singularity and is run via 'singularity run'
+
+%apphelp hpgltools_test
+echo "Run the hpgltools test suite."
+
+
+%apprun hpgltools_test
+echo "Running the hpgltools test suite."
+exec cd /data/hpgltools && make test
+
+
+%environment
+## If this works properly, I can delete the bashrc, apparently the contents of this stanza are
+## written to /.singularity.d/env/90-environment.sh
+## As of this writing, it appears VERSION is not propagated to the %post block, therefore
+## the definition is repeated there.
+. /usr/local/etc/bashrc
+
+
+## Instead of copying files within the setup section, one should use the files block, I think because
+## this is not run with elevated permissions.
+%files
+local/org.Lpanamensis.MHOMCOL81L13.v68.eg.db_2024.09.tar.gz /usr/local/org.Lpanamensis.MHOMCOL81L13.v68.eg.db_2024.09.tar.gz
+local/BSGenome.Leishmania.panamensis.MHOMCOL81L13.v68_2024.09.tar.gz /usr/local/BSGenome.Leishmania.panamensis.MHOMCOL81L13.v68_2024.09.tar.gz
+local/TxDb.Leishmania.panamensis.MHOMCOL81L13.TriTrypDB.v64_2023.07.tar.gz /usr/local/TxDb.Leishmania.panamensis.MHOMCOL81L13.TriTrypDB.v64_2023.07.tar.gz
+local/etc/bashrc /usr/local/etc/bashrc
+local/etc/deb_packages.txt /usr/local/etc/deb_packages.txt
+local/etc/conda_packages.txt /usr/local/etc/conda_packages.txt
+local/bin/bootstrap.R /usr/local/bin/bootstrap.R
+local/bin/bootstrap.sh /usr/local/bin/bootstrap.sh
+local/bin/runscript.sh /usr/local/bin/runscript.sh
+data/Makefile /data/Makefile
+data/renv.lock /data/renv.lock
+data/renv/activate.R /data/renv/activate.R
+data/renv/settings.json /data/renv/settings.json
+data/renv/.gitignore /data/renv/.gitignore
+local/etc/template /sw/modules/template
+data/00preprocessing.Rmd /data/00preprocessing.Rmd
+data/01datasets.Rmd /data/01datasets.Rmd
+data/02pre_visualization.Rmd /data/02pre_visualization.Rmd
+data/03differential_expression.Rmd /data/03differential_expression.Rmd
+data/04post_visualization.Rmd /data/04post_visualization.Rmd
+data/README.Rmd /data/README.Rmd
+data/compare_strains/kmer_tree.Rmd /data/compare_strains/kmer_tree.Rmd
+data/compare_strains/lbraziliensis_2904_v46.fasta.xz /data/compare_strains/lbraziliensis_2904_v46.fasta.xz
+data/compare_strains/leishmania_guyanensis_202209.fasta.xz /data/compare_strains/leishmania_guyanensis_202209.fasta.xz
+data/compare_strains/lpanamensis_cds.fasta.xz /data/compare_strains/lpanamensis_cds.fasta.xz
+data/compare_strains/lpanamensis_col_zymodeme_genes.fasta.xz /data/compare_strains/lpanamensis_col_zymodeme_genes.fasta.xz
+data/compare_strains/lpanamensis_psc1_v46.fasta.xz /data/compare_strains/lpanamensis_psc1_v46.fasta.xz
+data/compare_strains/lpanamensis_v36.fasta.xz /data/compare_strains/lpanamensis_v36.fasta.xz
+data/compare_strains/lpanamensis_v36.fasta.fai.xz /data/compare_strains/lpanamensis_v36.fasta.fai.xz
+data/compare_strains/lpanamensis_z21_cds.fasta.xz /data/compare_strains/lpanamensis_z21_cds.fasta.xz
+data/compare_strains/lpanamensis_z22_cds.fasta.xz /data/compare_strains/lpanamensis_z22_cds.fasta.xz
+data/compare_strains/lpanamensis_z23_cds.fasta.xz /data/compare_strains/lpanamensis_z23_cds.fasta.xz
+data/compare_strains/lpanamensis_z24_cds.fasta.xz /data/compare_strains/lpanamensis_z24_cds.fasta.xz
+data/compare_strains/strain_12444_modified_z24.fasta.xz /data/compare_strains/strain_12444_modified_z24.fasta.xz
+data/compare_strains/strain_12444_modified_z24.fasta.fai.xz /data/compare_strains/strain_12444_modified_z24.fasta.fai.xz
+data/compare_strains/strain_2168_modified_z23.fasta.xz /data/compare_strains/strain_2168_modified_z23.fasta.xz
+data/compare_strains/strain_2168_modified_z23.fasta.fai.xz /data/compare_strains/strain_2168_modified_z23.fasta.fai.xz
+data/preprocessing/tmrc2_count_tables.tar /data/preprocessing/tmrc2_count_tables.tar
+data/preprocessing/var_by_gene.tar /data/preprocessing/var_by_gene.tar
+data/preprocessing/freebayes_tags.tar /data/preprocessing/freebayes_tags.tar
+data/preprocessing/macrophage_host_counts.tar /data/preprocessing/macrophage_host_counts.tar
+data/preprocessing/macrophage_parasite_counts.tar /data/preprocessing/macrophage_parasite_counts.tar
+data/sample_sheets/ClinicalStrains_TMRC2.xlsx /data/sample_sheets/ClinicalStrains_TMRC2.xlsx
+data/sample_sheets/tmrc2_macrophage_samples.xlsx /data/sample_sheets/tmrc2_macrophage_samples.xlsx
+data/atb.bib /data/atb.bib
+
+
+%help
+String printed when "singularity help image.simg" is run.
+
+
+%labels
+Maintainer Ashton Trey Belew <abelew@umd.edu>
+
+
+%post
+echo "export CONTAINER_VERSION=202408" >> /versions.txt
+echo "export BIOC_VERSION=3.19" >> /versions.txt
+echo "export R_VERSION=4.4.1" >> /versions.txt
+/usr/local/bin/bootstrap.sh
+
+
+%runscript
+/usr/local/bin/runscript.sh $*
+
+
+## The setup block will be used to copy material which I cannot acquire
+## automatically.  Ideally this should only be a sample sheet and potentially
+## count tables for now.  ** NOTE ** This section is run as root! So be careful.
+%setup
+mkdir -p ${SINGULARITY_ROOTFS}/usr/local/bin
+mkdir -p ${SINGULARITY_ROOTFS}/usr/local/etc
+mkdir -p ${SINGULARITY_ROOTFS}/.emacs.d
+mkdir -p ${SINGULARITY_ROOTFS}/data/compare_strains
+mkdir -p ${SINGULARITY_ROOTFS}/data/preprocessing
+mkdir -p ${SINGULARITY_ROOTFS}/data/renv
+mkdir -p ${SINGULARITY_ROOTFS}/data/cpm
+mkdir -p ${SINGULARITY_ROOTFS}/data/rpkm
+mkdir -p ${SINGULARITY_ROOTFS}/data/images
+mkdir -p ${SINGULARITY_ROOTFS}/data/figures
+mkdir -p ${SINGULARITY_ROOTFS}/data/rda
+mkdir -p ${SINGULARITY_ROOTFS}/data/excel
+mkdir -p ${SINGULARITY_ROOTFS}/data/sample_sheets
+mkdir -p ${SINGULARITY_ROOTFS}/output
+mkdir -p ${SINGULARITY_ROOTFS}/sw/local/conda
+mkdir -p ${SINGULARITY_ROOTFS}/sw/local/R/renv_cache
+mkdir -p ${SINGULARITY_ROOTFS}/sw/modules
+if test -e "${HOME}/hpgltools"; then
+  mkdir -p ${SINGULARITY_ROOTFS}/data/hpgltools && rsync -av "${HOME}/hpgltools/" "${SINGULARITY_ROOTFS}/data/hpgltools/"
+else
+  mkdir -p ${SINGULARITY_ROOTFS}/data/hpgltools && git clone https://github.com/abelew/hpgltools "${SINGULARITY_ROOTFS}/data/hpgltools/"
+fi
+
+%test
+echo "Making sure hpgltools got installed."
+test -d "/data/hpgltools" || true

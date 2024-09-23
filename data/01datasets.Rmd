@@ -1,0 +1,1017 @@
+---
+title: "TMRC2 `r Sys.getenv('VERSION')`: Data Set Creation"
+author: "atb abelew@gmail.com"
+date: "`r Sys.Date()`"
+bibliography: atb.bib
+output:
+ html_document:
+    code_download: true
+    code_folding: show
+    fig_caption: true
+    fig_height: 7
+    fig_width: 7
+    highlight: zenburn
+    keep_md: false
+    mode: selfcontained
+    number_sections: true
+    self_contained: true
+    theme: readable
+    toc: true
+    toc_float:
+      collapsed: false
+      smooth_scroll: false
+---
+
+<style type="text/css">
+body .main-container {
+  max-width: 1600px;
+}
+body, td {
+  font-size: 16px;
+}
+code.r{
+  font-size: 16px;
+}
+pre {
+  font-size: 16px
+}
+</style>
+
+```{r options, include = FALSE}
+library(dplyr)
+library(glue)
+library(ggplot2)
+library(Heatplus)
+library(hpgltools)
+
+knitr::opts_knit$set(progress = TRUE, verbose = TRUE, width = 90, echo = TRUE)
+knitr::opts_chunk$set(
+  error = TRUE, fig.width = 9, fig.height = 9, fig.retina = 2,
+  out.width = "100%", dev = "png",
+  dev.args = list(png = list(type = "cairo-png")))
+old_options <- options(digits = 4, stringsAsFactors = FALSE, knitr.duplicate.label = "allow")
+ggplot2::theme_set(ggplot2::theme_bw(base_size = 12))
+ver <- Sys.getenv("VERSION")
+previous_file <- ""
+rundate <- format(Sys.Date(), format = "%Y%m%d")
+
+rmd_file <- "01datasets.Rmd"
+savefile <- gsub(pattern = "\\.Rmd", replace = "\\.rda\\.xz", x = rmd_file)
+data_structures <- c()
+```
+
+# TODO
+
+1.  Have a set where we merge 2.1/2.2, 2.3/2.4.
+2.  Represent the transition from a global view of the samples without
+    any classification, then state the subpopulations/zymodemes, then
+    add sensitivity/resistance, then cure/fail.
+3.  Perhaps make an explicit plot where all samples are one color
+    excepting a relatively small number of previously assayed set?
+    The samples which would be colored in this view would be from
+    Olga's 2014 paper I think.
+4.  Make a flow diagram going from s/r -> subpopulation ->
+    c/f/u. (sankey)
+5.  Make a table similar to the TMRC3 containing the statuses of the
+    samples.
+6.  Explicitly consider metadata column 'P' for reference strains --
+    make an all grey plot with a few samples colored taken from this
+    column.
+
+# Changelog
+
+## 20230524/20230628
+
+* Frozen metadata, now using sample sheet 'ClinicalStrains_TMRC2_Frozen\ 21062023.xlsx'
+
+## 20230410
+
+* Updating the version number due to some moderately intrusive changes
+  I made in order to more carefully create plots of the differential
+  expresison data.  I don't think anything I did should actually
+  change any of the data, but some of the analyses are definitely
+  affected (note that the only change in results is due to a mistake I
+  made in defining one of the contrasts, all other changes are just
+  plot aesthetic improvements)
+
+## 20230205
+
+* Did the stuff on this morning's TODO which came out of this
+  morning's meeting: do a PCA without the oddball strains (already
+  done in the worksheet), highlight reference strains, and add L.major
+  IDs and Descriptions (done by appending a collapsed version of the
+  ortholog data to the all_lp_annot data).
+
+* Fixed human IDs for the macrophage data.
+* Changed input metadata sheets: primarily because I only remembered
+  yesterday to finish the SL search for samples >TMRC20095.  They are
+  running now and will be added momentarily (I will have to redownload
+  the sheet).
+* Setting up to make a hclust/phylogenetic tree of strains, use these
+  are reference: 2168(2.3), 2272(2.2), for other 2.x choose
+  arbitrarily (lower numbers are better).
+* Added another sanitize columns call for Antimony vs. antimony and None vs.
+  none in the TMRC2 macrophage samples.
+
+# Introduction
+
+This document is intended to create the data structures used to
+evaluate our TMRC2 samples.  In some cases, this includes only those
+samples starting in 2019; in other instances I am including our
+previous (2015-2016) samples.
+
+In all cases the processing performed was:
+
+1.  Default trimming was performed.
+2.  Hisat2 was used to map the remaining reads against the Leishmania
+    panamensis genome revision 36.
+3.  The alignments from hisat2 were used to count reads/gene against the
+    revision 36 annotations with htseq.
+4.  These alignments were also passed to the pileup functionality of samtools
+    and the vcf/bcf utilities in order to make a matrix of all observed
+    differences between each sample with respect to the reference.
+5.  The freebayes variant estimation tool was used in addition to #4
+    to search for variant positions in a more robust fashion.
+6.  The trimmed reads were passed to kraken2 using a viral database in
+    order to look for samples with potential LRV sequence.
+7.  An explicit, grep-based search for spliced leader reads was used
+    against all human-derived samples.  The results from this were
+    copy/pasted into the sample sheet.
+
+# Notes 20221206 meeting
+
+I am thinking that this meeting will bring Maria Adelaida fully back
+into the analyses of the parasite data, and therefore may focus
+primarily on the goals rather than the analyses?
+
+* Maria Adelaida meeting with Olgla/Mariana: integrating
+  transcriptomics/genomics question.
+* Paper on relationship btwn primary metadata factors via transcriptome/genome.
+* Second on drug susceptibility without those factors (I think this
+  means the macrophages)
+* Definition of species?  MAG: Define consensus sequences for various
+  strains/species.  We effectively have this on hand, though the
+  quality may be a little less good for 2.3.
+* Resulting goal: Create a tree of the strains (I am just going to
+  call zymodemes strains from now on).
+**  What organisms would we include in a tree to describe these
+    relationships: guyanensis, braziliensis 2904, 2.2, 2.3, 2.1, 2.4,
+    panamensis reference, peruviania(sp? I have not seen this genome),
+    panama, 2903; actually this may be tricky because we have always
+    done this with a specific reference strain (panamensis col) which is
+    one of the strains in the comparison.  hmm...
+**  Check the most variant strains for identity (Luc)
+**  Methods for creating tree, traditional phylogeny vs. variant
+    hclust?
+* PCR queries, works well if one performs sanger sequencing.
+
+## Multiple datasets
+
+In a couple of important ways the TMRC2 data is much more complex than the
+TMRC3:
+
+1.  It comprises multiple, completely separate queries:
+    a.  Sequencing the parasite samples
+    b.  Sequencing a set of human macrophage samples which were infected
+        with specific parasite samples.
+2.  The parasite transcriptomic samples comprise multiple different
+    types of queries:
+    a.  Differential expression to look at strain, susceptibility, and
+    clinical outcomes.
+    b.  Individual variant searches to look for potentially useful
+    SNPs for classification of parasite samples.
+3.  The human macrophage samples may be used to query both the host
+    and parasite transcriptomes because (at least when not drug
+    treated) there is a tremendous population of parasite reads in
+    them.
+
+## Sample sheet(s)
+
+Our shared online sample sheet is nearly static at the time of this
+writing (202209), I expect at this point the only likely updates will
+be to annotate some strains as more or less susceptible to drug
+treatment.
+
+```{r}
+sample_sheet <- "sample_sheets/ClinicalStrains_TMRC2.xlsx"
+macrophage_sheet <- "sample_sheets/tmrc2_macrophage_samples.xlsx"
+```
+
+### Modify the sample sheet
+
+The following block provides an example invocation of how I
+automatically extract things like percent reads mapped/trimmed/etc
+from the logs produced by trimomatic/cutadapt/hisat/salmon/etc.  The
+caveat is that this container only has a small portion of the material
+available in the main working tree, as a result the new columns added
+to the sample sheet are relatively sparse compared to what I get on my
+computer.
+
+In addition, because these samples have gone through ~ 3 different
+versions of my pipeline, and the code which extracts the numbers
+explicitly assumes only the most recent version (because it is the
+best!), it does not get out the data for all the samples.
+
+```{r}
+modified <- gather_preprocessing_metadata(sample_sheet, species = "lpanamensis_v36")
+```
+
+# Annotations
+
+Everything which follows depends on the Existing TriTrypDB annotations revision
+46, circa 2019.  The following block loads a database of these annotations and
+turns it into a matrix where the rows are genes and columns are all the
+annotation types provided by TriTrypDB.
+
+The same database was used to create a matrix of orthologous genes between
+L.panamensis and all of the other species in the TriTrypDB.
+
+The same database of annotations also provides mappings to the set of
+annotated GO categories for the L.panamensis genome along with gene
+lengths.
+
+```{r}
+## meta <- download_eupath_metadata(webservice = "tritrypdb", eu_version = "v46")
+meta <- download_eupath_metadata(webservice = "tritrypdb")
+panamensis_entry <- get_eupath_entry("MHOM", metadata = meta[["valid"]])
+panamensis_db <- make_eupath_orgdb(panamensis_entry)
+panamensis_pkg <- panamensis_db[["pkgname"]]
+package_name <- panamensis_db[["pkgname"]]
+if (is.null(panamensis_pkg)) {
+  panamensis_pkg <- panamensis_db[["orgdb_name"]]
+  package_name <- panamensis_pkg
+}
+tt <- library(panamensis_pkg, character.only = TRUE)
+panamensis_pkg <- get0(panamensis_pkg)
+all_fields <- columns(panamensis_pkg)
+all_lp_annot <- sm(load_orgdb_annotations(
+    panamensis_pkg,
+    keytype = "gid",
+    fields = c("annot_gene_entrez_id", "annot_gene_name",
+               "annot_strand", "annot_chromosome", "annot_cds_length",
+               "annot_gene_product")))$genes
+
+lp_go <- load_orgdb_go(package_name)
+lp_go <- lp_go[, c("GID", "GO")]
+lp_lengths <- all_lp_annot[, c("gid", "annot_cds_length")]
+colnames(lp_lengths)  <- c("ID", "length")
+all_lp_annot[["annot_gene_product"]] <- tolower(all_lp_annot[["annot_gene_product"]])
+orthos <- sm(extract_eupath_orthologs(db = panamensis_pkg))
+data_structures <- c(data_structures, "lp_lengths", "lp_go", "all_lp_annot", "meta")
+```
+
+## Repeat for the L.major annotations
+
+Recently there was a request to include the Leishmania major gene IDs
+and descriptions.  Thus I will extract them along with the orthologs
+and append that to the annotations used.
+
+Having spent the time to run the following code, I realized that the
+orthologs data structure above actually already has the gene IDs and
+descriptions.
+
+Thus I will leave my query in place to extract the major annotations,
+but follow it up with a collapse of the major orthologs and appending
+of that to the panamensis annotations.
+
+```{r eupathdb_lmajor, eval=FALSE}
+orgdb <- "org.Lmajor.Friedlin.v49.eg.db"
+tt <- sm(library(orgdb, character.only = TRUE))
+major_db <- org.Lmajor.Friedlin.v49.eg.db
+all_fields <- columns(pan_db)
+all_lm_annot <- sm(load_orgdb_annotations(
+    major_db,
+    keytype = "gid",
+    fields = c("annot_gene_entrez_id", "annot_gene_name",
+               "annot_strand", "annot_chromosome", "annot_cds_length",
+               "annot_gene_product")))$genes
+
+wanted_orthos_idx <- orthos[["ORTHOLOGS_SPECIES"]] == "Leishmania major strain Friedlin"
+sum(wanted_orthos_idx)
+wanted_orthos <- orthos[wanted_orthos_idx, ]
+wanted_orthos <- wanted_orthos[, c("GID", "ORTHOLOGS_ID", "ORTHOLOGS_NAME")]
+
+collapsed_orthos <- wanted_orthos %>%
+  group_by(GID) %>%
+  summarise(collapsed_id = stringr::str_c(ORTHOLOGS_ID, collapse = " ; "),
+            collapsed_name = stringr::str_c(ORTHOLOGS_NAME, collapse = " ; "))
+all_lp_annot <- merge(all_lp_annot, collapsed_orthos, by.x = "row.names",
+                      by.y = "GID", all.x = TRUE)
+rownames(all_lp_annot) <- all_lp_annot[["Row.names"]]
+all_lp_annot[["Row.names"]] <- NULL
+data_structures <- c(data_structures, "lp_lengths", "lp_go", "all_lp_annot")
+```
+
+# Load a genome
+
+The following block loads the full genome sequence for panamensis.  We
+may use this later to attempt to estimate PCR primers to discern strains.
+
+I am not sure how to increase the number of open files in a container,
+as a result this does not work.
+
+```{r genome, eval=FALSE}
+## testing_panamensis <- make_eupath_bsgenome(entry = panamensis_entry, eu_version = "v46")
+testing_panamensis <- make_eupath_bsgenome(entry = panamensis_entry)
+library(as.character(testing_panamensis), character.only = TRUE)
+lp_genome <- get0(as.character(testing_panamensis))
+data_structures <- c(data_structures, "lp_genome", "meta")
+```
+
+# Generate Expressionsets and Sample Estimation
+
+The process of sample estimation takes two primary inputs:
+
+1.  The sample sheet, which contains all the metadata we currently have on hand,
+    including filenames for the outputs of #3 and #4 above.
+2.  The gene annotations.
+
+An expressionSet(or summarizedExperiment) is a data structure used in
+R to examine RNASeq data.  It is comprised of annotations, metadata,
+and expression data.  In the case of our processing pipeline, the
+location of the expression data is provided by the filenames in the metadata.
+
+## Notes
+
+The following samples are much lower coverage:
+
+* TMRC20002
+* TMRC20006
+* TMRC20007
+* TMRC20008
+
+There is a set of strains which acquired resistance in vitro.  These
+are included in the dataset, but there are not likely enough of them
+to query that question explicitly.
+
+## Define colors
+
+The following list contains the colors we have chosen to use when
+plotting the various ways of discerning the data.
+
+```{r}
+color_choices <- list(
+    "strain" = list(
+        ## "z1.0" = "#333333", ## Changed this to 'braz' to make it easier to find them.
+        "z2.0" = "#555555",
+        "z3.0" = "#777777",
+        "z2.1" = "#874400",
+        "z2.2" = "#0000cc",
+        "z2.3" = "#cc0000",
+        "z2.4" = "#df7000",
+        "z3.2" = "#888888",
+        "z1.0" = "#cc00cc",
+        "z1.5" = "#cc00cc",
+        "b2904" = "#cc00cc",
+        "unknown" = "#cbcbcb"),
+    ## "null" = "#000000"),
+    "zymo" = list(
+      "z22" = "#0000cc",
+      "z23" = "#cc0000"),
+    "cf" = list(
+        "cure" = "#006f00",
+        "fail" = "#9dffa0",
+        "unknown" = "#cbcbcb",
+        "notapplicable" = "#000000"),
+    "susceptibility" = list(
+        "resistant" = "#8563a7",
+        "sensitive" = "#8d0000",
+        "ambiguous" = "#cbcbcb",
+        "unknown" = "#555555"))
+data_structures <- c(data_structures, "color_choices")
+```
+
+# Parasite-only data structure
+
+The data structure 'lp_expt' contains the data for all samples which
+have hisat2 count tables, and which pass a few initial quality tests
+(e.g. they must have more than 8550 genes with >0 counts and >5e6
+reads which mapped to a gene); genes which are annotated with a few
+key redundant categories (leishmanolysin for example) are also culled.
+
+## All (almost) samples
+
+There are a few metadata columns which we really want to make certain
+are standardized.
+
+Note: I changed this to print both the number of reads and genes for removed samples.
+
+```{r}
+sanitize_columns <- c("passagenumber", "clinicalresponse", "clinicalcategorical",
+                      "zymodemecategorical", "included")
+lp_expt <- create_expt(sample_sheet,
+                       gene_info = all_lp_annot,
+                       annotation_name = package_name,
+                       savefile = glue("rda/tmrc2_lp_expt_all_raw-v{ver}.rda"),
+                       id_column = "hpglidentifier",
+                       annotation = package_name, ## this is redundantredundant
+                       file_column = "lpanamensisv36hisatfile") %>%
+  set_expt_conditions(fact = "zymodemecategorical", colors = color_choices[["strain"]]) %>%
+  semantic_expt_filter(semantic = c("amastin", "gp63", "leishmanolysin"),
+                       semantic_column = "annot_gene_product") %>%
+  sanitize_expt_pData(columns = sanitize_columns) %>%
+  subset_expt(subset = "included=='yes'") %>%
+  set_expt_factors(columns = sanitize_columns, class = "factor")
+data_structures <- c(data_structures, "lp_expt")
+save(list = "lp_expt", file = glue("rda/tmrc2_lp_expt_all_sanitized-v{ver}.rda"))
+
+table(pData(lp_expt)[["zymodemecategorical"]])
+table(pData(lp_expt)[["clinicalresponse"]])
+table(pData(lp_expt)[["clinicalcategorical"]])
+ncol(exprs(lp_expt))
+```
+
+## Print sample IDs by status
+
+### Cure
+
+```{r}
+cure_ids <- pData(lp_expt)[["clinicalcategorical"]] == "cure"
+rownames(pData(lp_expt))[cure_ids]
+```
+
+### Fail
+
+```{r}
+fail_ids <- pData(lp_expt)[["clinicalcategorical"]] == "fail"
+rownames(pData(lp_expt))[fail_ids]
+```
+
+### Unknown
+
+```{r}
+unknown_ids <- pData(lp_expt)[["clinicalcategorical"]] == "unknown"
+rownames(pData(lp_expt))[unknown_ids]
+```
+
+All the following data will derive from this starting point.
+
+## Extract samples from only the two 'canonical' strains
+
+### Quick divergence
+
+Here is a table of my current classifier's interpretation of the strains.
+
+```{r}
+table(pData(lp_expt)[["knnv2classification"]])
+```
+
+### Merge 2.1/2.2 and 2.4/2.3
+
+```{r}
+merged_zymo <- lp_expt
+pData(merged_zymo)[["zymodeme"]] <- as.character(pData(merged_zymo)[["zymodemecategorical"]])
+z21_idx <- pData(merged_zymo)[["zymodeme"]] == "z21"
+pData(merged_zymo)[z21_idx, "zymodeme"] <- "z22"
+
+z24_idx <- pData(merged_zymo)[["zymodeme"]] == "z24"
+pData(merged_zymo)[z24_idx, "zymodeme"] <- "z23"
+
+keepers <- pData(merged_zymo)[["zymodeme"]] == "z22" |
+  pData(merged_zymo)[["zymodeme"]] == "z23"
+merged_zymo <- merged_zymo[, keepers] %>%
+  set_expt_conditions(fact = "zymodeme", colors = color_choices[["zymo"]])
+```
+
+# Add library sizes before filtering
+
+```{r}
+table(pData(lp_expt)[["clinicalcategorical"]])
+unknown_ids <- pData(lp_expt)[["clinicalcategorical"]] == "unknown"
+rownames(pData(lp_expt))[unknown_ids]
+failed_ids <- pData(lp_expt)[["clinicalcategorical"]] == "fail"
+rownames(pData(lp_expt))[failed_ids]
+
+pre_libsize <- plot_libsize(lp_expt)
+pre_libsize
+
+pdf(file = "figures/library_size_pre_filter.pdf", width = 24, height = 12)
+pre_libsize$plot
+dev.off()
+
+pre_nonzero <- plot_nonzero(lp_expt)
+pre_nonzero
+pdf(file = "figures/nonzero_pre_filter.pdf")
+pre_nonzero$plot
+dev.off()
+
+lp_expt_pre <- lp_expt
+lp_expt <- subset_expt(lp_expt, nonzero = 8550)
+
+post_nonzero <- plot_nonzero(lp_expt)
+post_nonzero
+```
+
+## Extract historical susceptibility data
+
+Column 'Q' in the sample sheet, make a categorical version of it with these parameters:
+
+* 0 <= x <= 35 is resistant
+* 36 <= x <= 48 is ambiguous
+* 49 <= x is sensitive
+
+Note that these cutoffs are only valid for the historical data.  The
+newer susceptibility data uses a cutoff of 0.78 for sensitive.  I will
+set ambiguous to 0.5 to 0.78?
+
+```{r}
+max_resist_historical <- 0.35
+min_sensitive_historical <- 0.49
+
+## 202305: Removed ambiguous category for the current set.
+max_resist_current <- 0.77
+min_sensitive_current <- 0.77
+```
+
+The sanitize_percent() function seeks to make the percentage values
+recorded by excel more reliable.  Unfortunately, sometimes excel
+displays the value '49%' when the information recorded in the
+worksheet is any one of the following:
+
+* '49%
+* 0.49
+* "0.49"
+
+Thus, the following block will sanitize these percentage values into a
+single decimal number and make a categorical variable from it using
+pre-defined values for resistant/ambiguous/sensitive.  This
+categorical variable will be stored in a new column: 'sus_category_historical'.
+
+```{r}
+st <- pData(lp_expt)[["susceptibilityinfectionreduction32ugmlsbvhistoricaldata"]]
+starting <- sanitize_percent(st)
+st
+starting
+sus_categorical <- starting
+na_idx <- is.na(starting)
+sum(na_idx)
+sus_categorical[na_idx] <- "unknown"
+
+resist_idx <- starting <= max_resist_historical
+sus_categorical[resist_idx] <- "resistant"
+indeterminant_idx <- starting > max_resist_historical &
+  starting < min_sensitive_historical
+sus_categorical[indeterminant_idx] <- "ambiguous"
+susceptible_idx <- starting >= min_sensitive_historical
+sus_categorical[susceptible_idx] <- "sensitive"
+
+sus_categorical <- as.factor(sus_categorical)
+pData(lp_expt)[["sus_category_historical"]] <- sus_categorical
+table(sus_categorical)
+
+two_sankey <- plot_meta_sankey(
+  merged_zymo, factors = c("zymodeme", "clinicalcategorical", "susceptibility"),
+  drill_down = TRUE, color_choices = color_choices)
+two_sankey
+```
+
+## Extract current susceptibility data
+
+The same process will be repeated for the current iteration of the
+sensitivity assay and stored in the 'sus_category_current' column.
+
+```{r}
+starting_current <- sanitize_percent(pData(lp_expt)[["susceptibilityinfectionreduction32ugmlsbvcurrentdata"]])
+sus_categorical_current <- starting_current
+na_idx <- is.na(starting_current)
+sum(na_idx)
+sus_categorical_current[na_idx] <- "unknown"
+
+## The following is only valid when we had three categories, resistant/ambiguous/sensitive
+## The new cutoffs drop ambiguous.
+#resist_idx <- starting_current <= max_resist_current
+#sus_categorical_current[resist_idx] <- "resistant"
+#indeterminant_idx <- starting_current > max_resist_current &
+#  starting_current < min_sensitive_current
+#sus_categorical_current[indeterminant_idx] <- "ambiguous"
+#susceptible_idx <- starting_current >= min_sensitive_current
+#sus_categorical_current[susceptible_idx] <- "sensitive"
+#sus_categorical_current <- as.factor(sus_categorical_current)
+resist_idx <- starting_current <= max_resist_current
+sensitive_idx <- !resist_idx
+sus_categorical_current[resist_idx] <- "resistant"
+sus_categorical_current[sensitive_idx] <- "sensitive"
+sus_categorical_current <- as.factor(sus_categorical_current)
+
+pData(lp_expt)[["sus_category_current"]] <- sus_categorical_current
+pData(lp_expt)[["susceptibility"]] <- sus_categorical_current
+table(sus_categorical_current)
+
+lp_sankey <- plot_meta_sankey(
+  lp_expt, factors = c("zymodemecategorical", "clinicalcategorical", "susceptibility"),
+  drill_down = TRUE, color_choices = color_choices)
+lp_sankey
+```
+
+In many queries, we will seek to compare only the two primary strains,
+zymodeme 2.2 and 2.3.  The following block will extract only those
+samples.
+
+Note: *IMPORTANT* Maria Adelaida prefers not to use lp_two_strains.  We should not at this time
+use the merged 2.1/2.2 and 2.4/2.3 categories.
+
+```{r}
+lp_strain <- lp_expt %>%
+  set_expt_batches(fact = sus_categorical_current) %>%
+  set_expt_colors(color_choices[["strain"]])
+table(pData(lp_strain)[["condition"]])
+save(list = "lp_strain", file = glue("rda/tmrc2_lp_strain-v{ver}.rda"))
+data_structures <- c(data_structures, "lp_strain")
+
+lp_two_strains <- merged_zymo
+save(list = "lp_two_strains",
+     file = glue("rda/tmrc2_lp_two_strains-v{ver}.rda"))
+data_structures <- c(data_structures, "lp_two_strains")
+```
+
+## Clinical outcome
+
+Clinical outcome is by far the most problematic comparison in this
+data, but here is the recategorization of the data using it:
+
+```{r}
+lp_cf <- set_expt_conditions(lp_expt, fact = "clinicalcategorical",
+                             colors = color_choices[["cf"]]) %>%
+  set_expt_batches(fact = sus_categorical_current)
+table(pData(lp_cf)[["condition"]])
+data_structures <- c(data_structures, "lp_cf")
+save(list = "lp_cf",
+     file = glue("rda/tmrc2_lp_cf-v{ver}.rda"))
+
+lp_cf_known <- subset_expt(lp_cf, subset = "condition!='unknown'")
+data_structures <- c(data_structures, "lp_cf_known")
+save(list = "lp_cf_known",
+     file = glue("rda/tmrc2_lp_cf_known-v{ver}.rda"))
+data_structures <- c(data_structures, "lp_cf_known")
+save(list = "lp_cf_known",
+     file = glue("rda/tmrc2_lp_cf_known-v{ver}.rda"))
+```
+
+## Create a historical susceptibility dataset
+
+Use the factorized version of susceptibility to categorize the samples
+by the historical data.
+
+```{r}
+lp_susceptibility_historical <- set_expt_conditions(
+  lp_expt, fact = "sus_category_historical", colors = color_choices[["susceptibility"]]) %>%
+  set_expt_batches(fact = "clinicalcategorical")
+save(list = "lp_susceptibility_historical",
+     file = glue("rda/tmrc2_lp_susceptibility_historical-v{ver}.rda"))
+data_structures <- c(data_structures, "lp_susceptibility_historical")
+```
+
+## Create a current susceptibility dataset
+
+Use the factorized version of susceptibility to categorize the samples
+by the historical data.
+
+This will likely be our canonical susceptibility dataset, so I will
+remove the suffix and just call it 'lp_susceptibility'.
+
+```{r}
+lp_susceptibility <- set_expt_conditions(
+  lp_expt, fact = "sus_category_current", colors = color_choices[["susceptibility"]]) %>%
+  set_expt_batches(fact = "clinicalcategorical")
+save(list = "lp_susceptibility",
+     file = glue("rda/tmrc2_lp_susceptibility-v{ver}.rda"))
+data_structures <- c(data_structures, "lp_susceptibility")
+```
+
+## Pull out only the samples with two zymodemes
+
+I think this is redundant with a previous block, but I am leaving it
+until I am certain that it is not required in a following document.
+
+Note: *IMPORTANT* This is the set Maria Adeliada prefers to use.
+
+```{r zymo_de, fig.show="hide"}
+lp_zymo <- subset_expt(lp_expt, subset = "condition=='z2.2'|condition=='z2.3'")
+data_structures <- c(data_structures, "lp_zymo")
+save(list = "lp_zymo",
+     file = glue("rda/tmrc2_lp_zymo-v{ver}.rda"))
+```
+
+# Variant data using parasite RNASeq reads
+
+The following section will create some initial data structures of the
+observed variants in the parasite samples.  This will include some of
+our 2016 samples for some classification queries.
+
+## The 2016 variant data
+
+I changed and improved the mapping and variant detection methods from
+what we used for the 2016 data.  So some small changes will be
+required to merge them.
+
+```{r oldnew_variants, eval=FALSE}
+lp_previous <- create_expt("sample_sheets/tmrc2_samples_20191203.xlsx",
+                           file_column = "tophat2file",
+                           savefile = glue("rda/lp_previous-v{ver}.rda"))
+tt <- lp_previous$expressionset
+rownames(tt) <- gsub(pattern = "^exon_", replacement = "", x = rownames(tt))
+rownames(tt) <- gsub(pattern = "\\.1$", replacement = "", x = rownames(tt))
+rownames(tt) <- gsub(pattern = "\\-1$", replacement = "", x = rownames(tt))
+lp_previous$expressionset <- tt
+rm(tt)
+data_structures <- c(data_structures, "lp_previous")
+```
+
+## Create the SNP expressionset
+
+The count_expt_snps() function uses our expressionset data and a
+metadata column in order to extract the mpileup or freebayes-based
+variant calls and create matrices of the likelihood that each
+position-per-sample is in fact a variant.
+
+There is an important caveat here which changed on 202301:  I was
+interpreting using the PAIRED tag, which is only used for,
+unsurprisingly, paired-end samples.  A couple samples are not paired
+and so were failing silently.  The QA tag looks like it is more
+appropriate and should work across both types.  One way to find out, I
+am setting it here and will look to see if the results make more sense
+for my test samples (TMRC2001, TMRC2005, TMRC2007).
+
+```{r}
+## The next line drops the samples which are missing the SNP pipeline.
+lp_snp <- subset_expt(lp_expt, subset = "!is.na(pData(lp_expt)[['freebayessummary']])")
+
+lp_snp_sufficient <- subset_expt(lp_snp, subset = "rownames!='TMRC20082'")
+lp_snp_only22_23_ref <- subset_expt(lp_snp, subset = "zymodemereference=='z2.2'|zymodemereference=='z2.3'") %>%
+  subset_expt(subset = "rownames!='TMRC20082'")
+lp_snp_22_23_ml <- subset_expt(lp_snp, subset = "knnv2classification=='z22'|knnv2classification=='z23'") %>%
+  subset_expt(subset = "rownames!='TMRC20082'")
+
+new_snps_sufficient <- count_expt_snps(lp_snp_sufficient, annot_column = "freebayessummary", snp_column = "QA",
+                                       reader = "readr")
+new_snps_only22_23_ref_suf <- count_expt_snps(lp_snp_only22_23_ref, annot_column = "freebayessummary", snp_column = "QA",
+                                              reader = "readr")
+new_snps_22_23_ml_suf <- count_expt_snps(lp_snp_22_23_ml, annot_column = "freebayessummary", snp_column = "QA",
+                                         reader = "readr")
+
+## Lets see if we get numbers which make sense.
+summary(exprs(new_snps)[["tmrc20001"]])  ## My weirdo sample
+summary(exprs(new_snps)[["tmrc20072"]])  ## Another sample chosen at random
+summary(exprs(new_snps)[["tmrc20021"]])  ## Another sample chosen at random
+## Now that we are reasonably confident that things make more sense, lets save and move on...
+data_structures <- c(data_structures, "new_snps", "lp_snp")
+
+tt <- normalize_expt(new_snps, transform = "log2")
+plot_boxplot(tt)
+```
+
+Now let us pull in the 2016 data.
+
+```{r merge_new_old, eval=FALSE}
+old_snps <- count_expt_snps(lp_previous, annot_column = "bcftable", snp_column = 2)
+data_structures <- c(data_structures, "old_snps")
+
+save(list = "lp_snp",
+     file = glue("rda/lp_snp-v{ver}.rda"))
+data_structures <- c(data_structures, "lp_snp")
+save(list = "new_snps",
+     file = glue("rda/new_snps-v{ver}.rda"))
+data_structures <- c(data_structures, "new_snps")
+save(list = "old_snps",
+     file = glue("rda/old_snps-v{ver}.rda"))
+data_structures <- c(data_structures, "old_snps")
+
+nonzero_snps <- exprs(new_snps) != 0
+colSums(nonzero_snps)
+```
+
+## Combine the previous and current data
+
+As far as I can tell, freebayes and mpileup are reasonably similar in
+their sensitivity/specificity; so combining the two datasets like this
+is expected to work with minimal problems.  The most likely problem is
+that my mpileup-based pipeline is unable to handle indels.
+
+```{r combine_old_snps, eval=FALSE}
+## My old_snps is using an older annotation incorrectly, so fix it here:
+#annotation(old_snps) <- annotation(new_snps)
+both_snps <- combine_expts(new_snps, old_snps)
+save(list = "both_snps",
+     file = glue("rda/both_snps-v{ver}.rda"))
+data_structures <- c(data_structures, "both_snps")
+```
+
+# Subclade manual interpretation
+
+I am taking a heatmap from our variant data and manually identifying sample groups.
+
+* A: TMRC20025, TMRC20027, TMRC20028
+* B: hpgl0641, hpgl0247, hpgl0631, hpgl0658, close to A
+* C: TMRC20008, TMRC20007, TMRC20001, TMRC20005, hpgl0318, TMRC20012
+* D: hpgl0643, hpgl0316, hpgl0320, hpgl0641, close to C
+* E: TMRC20032, TMRC20061
+* F: TMRC20040, TMRC20036, hpgl0245, TMRC20103, TMRC20093, TMRC20045,
+     TMRC20041, TMRC20072, TMRC20046, TMRC20057, TMRC20097, TMRC20084,
+     close to E
+* G: hpgl0632, hpgl0652, hpgl0248, hpgl0659
+* H: hpgl0654, hpgl0634, hpgl0243, hpgl0243, closest to G
+* I: hpgl0242, hpgl0322, hpgl0636, hpgl0663, hpgl0638, close to H
+* J: TMRC20017, TMRC20033, TMRC20053, TMRC20063, TMRC20056, TMRC20074,
+     TMRC20055, TMRC20022, TMRC20026, TMRC20083, TMRC20077, TMRC20060
+* K: TMRC20050, TMRC20042, TMRC20078, TMRC20049, TMRC20069, TMRC20044,
+     close to J
+* L: TMRC20076, TMRC20024, TMRC2009
+* M: TMRC20019, TMRC20020, TMRC20031, TMRC20014, TMRC20011, close to L
+* N: TMRC20096, TMRC20081, TMRC20110, TMRC20092, TMRC20088, TMRC20101,
+     TMRC20106, TMRC20091, TMRC20109, TMRC20087, TMRC20086, closeish
+     to M
+* O: TMRC20095, TMRC20016, TMRC20018, quite far from everyone
+* P: TMRC20082, TMRC20075, pretty separate too
+* Q: hpgl0246, hpgl0653, hpgl0633, hpgl0244, hpgl0635, hpgl0655,
+     hpgl0639, hpgl0662
+* R: TMRC20059, TMRC20089, TMRC20021, TMRC20048, TMRC20067
+* S: TMRC20013, TMRC20010, TMRC20037, TMRC20066, TMRC20062, TMRC20038,
+     close to R
+* T: TMRC20015, TMRC20108, TMRC20099, TMRC20102, TMRC20085, TMRC20090,
+     TMRC20104, TMRC20098, TMRC20100, TMRC20107
+* U: TMRC20047, TMRC20068, TMRC20080, TMRC20105, TMRC20094, TMRC20065,
+     TMRC20071, TMRC20064, TMRC20043, TMRC20070, TMRC20062, TMRC20051,
+     TMRC20079, TMRC20073, TMRC20058, TMRC20054
+
+# Macrophage data
+
+All of the above focused entire on the parasite samples, now let us
+pull up the macrophage infected samples.  This will comprise two
+datasets, one of the human and one of the parasite.
+
+## Macrophage host data
+
+The metadata for the macrophage samples contains a couple of columns
+for mapped human and parasite reads.  We will therefore use them
+separately to create two expressionsets, one for each species.
+
+```{r}
+hs_annot <- load_biomart_annotations(year = "2020", month = 4)
+hs_annot <- hs_annot[["annotation"]]
+hs_annot[["transcript"]] <- paste0(rownames(hs_annot), ".", hs_annot[["transcript_version"]])
+rownames(hs_annot) <- make.names(hs_annot[["ensembl_gene_id"]], unique = TRUE)
+rownames(hs_annot) <- paste0("gene:", rownames(hs_annot))
+tx_gene_map <- hs_annot[, c("transcript", "ensembl_gene_id")]
+
+sanitize_columns <- c("drug", "macrophagetreatment", "macrophagezymodeme")
+macr_annot <- hs_annot
+rownames(macr_annot) <- gsub(x = rownames(macr_annot),
+                             pattern = "^gene:",
+                             replacement = "")
+hs_macrophage <- create_expt(
+    macrophage_sheet,
+    gene_info = macr_annot,
+    file_column = "hg38100hisatfile") %>%
+  set_expt_conditions(fact = "macrophagetreatment") %>%
+  set_expt_batches(fact = "macrophagezymodeme") %>%
+  sanitize_expt_pData(columns = sanitize_columns) %>%
+  subset_expt(nonzero = 12000)
+fixed_genenames <- gsub(x = rownames(exprs(hs_macrophage)), pattern = "^gene:",
+                        replacement = "")
+hs_macrophage <- set_expt_genenames(hs_macrophage, ids = fixed_genenames)
+table(pData(hs_macrophage)$condition)
+
+## The following 3 lines were copy/pasted to datastructures and should be removed soon.
+nostrain <- is.na(pData(hs_macrophage)[["strainid"]])
+pData(hs_macrophage)[nostrain, "strainid"] <- "none"
+
+pData(hs_macrophage)[["strain_zymo"]] <- paste0("s", pData(hs_macrophage)[["strainid"]],
+                                                "_", pData(hs_macrophage)[["macrophagezymodeme"]])
+uninfected <- pData(hs_macrophage)[["strain_zymo"]] == "snone_none"
+pData(hs_macrophage)[uninfected, "strain_zymo"] <- "uninfected"
+
+data_structures <- c(data_structures, "hs_macrophage")
+```
+
+Finally, split off the U937 samples.
+
+```{r}
+hs_u937 <- subset_expt(hs_macrophage, subset = "typeofcells!='Macrophages'")
+data_structures <- c(data_structures, "hs_u937")
+```
+
+## Macrophage parasite data
+
+In the previous block, we used a new invocation of ensembl-derived
+annotation data, this time we can just use our existing parasite gene
+annotations.
+
+```{r}
+lp_macrophage <- create_expt(macrophage_sheet,
+                             file_column = "lpanamensisv36hisatfile",
+                             gene_info = all_lp_annot,
+                             savefile = glue("rda/lp_macrophage-v{ver}.rda"),
+                             annotation = "org.Lpanamensis.MHOMCOL81L13.v46.eg.db") %>%
+set_expt_conditions(fact = "macrophagezymodeme") %>%
+  set_expt_batches(fact = "macrophagetreatment")
+
+unfilt_written <- write_expt(
+  lp_macrophage,
+  excel = glue("analyses/macrophage_de/{ver}/read_counts/lp_macrophage_reads_unfiltered-v{ver}.xlsx"))
+
+lp_macrophage_filt <- subset_expt(lp_macrophage, nonzero = 2500) %>%
+  semantic_expt_filter(semantic = c("amastin", "gp63", "leishmanolysin"),
+                       semantic_column = "annot_gene_product")
+data_structures <- c(data_structures, "lp_macrophage", "lp_macrophage_filt")
+filt_written <- write_expt(lp_macrophage_filt,
+  excel = glue("analyses/macrophage_de/{ver}/read_counts/lp_macrophage_reads_filtered-v{ver}.xlsx"))
+lp_macrophage <- lp_macrophage_filt
+
+lp_macrophage_nosb <- subset_expt(lp_macrophage, subset = "batch!='inf_sb'")
+lp_nosb_write <- write_expt(
+  lp_macrophage_nosb,
+  excel = glue("analyses/macrophage_de/{ver}/read_counts/lp_macrophage_nosb_reads-v{ver}.xlsx"))
+data_structures <- c(data_structures, "lp_macrophage_nosb")
+
+spec <- make_rnaseq_spec()
+test <- sm(gather_preprocessing_metadata(macrophage_sheet, specification = spec))
+```
+
+# Plot SL Reads on a per condition basis
+
+```{r}
+lp_meta <- pData(lp_macrophage)
+lp_meta[["slvsreads_log"]] <- log10(lp_meta[["slvsreads"]])
+inf_values <- is.infinite(lp_meta[["slvsreads_log"]])
+lp_meta[inf_values, "slvsreads_log"] <- -10
+
+color_vector <- as.character(color_choices[["strain"]])
+names(color_vector) <- names(color_choices[["strain"]])
+color_vector <- color_vector[c("z2.2", "z2.3", "unknown")]
+names(color_vector) <- c("z2.2", "z2.3", "none")
+sl_violin <- ggplot(lp_meta,
+                    aes(x = .data[["condition"]], y = .data[["slvsreads_log"]],
+                        fill = .data[["condition"]])) +
+  geom_violin() +
+  geom_point() +
+  scale_fill_manual(values = color_vector)
+sl_violin
+
+ggstatsplot::ggbetweenstats(lp_meta, x = "condition", y = "slvsreads_log")
+```
+
+# Make a silly ploidy plot
+
+I want to make an estimate of ploidy using transcriptomic data.  This
+is by definition a foold's errand, but I think it might work.
+
+```{r}
+lp_rpkm <- normalize_expt(lp_expt, convert = "rpkm", filter = TRUE)
+
+## Exclude scaffolds
+unwanted <- grepl(pattern = "SCAF", x = fData(lp_rpkm)[["chromosome"]])
+## I think my subset logic is bacwards...
+lp_wanted <- lp_rpkm[!unwanted, ]
+
+summary_df <- as.data.frame(exprs(lp_wanted))
+summary_df[["gene_mean"]] <- rowMeans(summary_df, na.rm = TRUE)
+summary_df[["chromosome"]] <- fData(lp_wanted)[["chromosome"]]
+summary_df <- summary_df[, c("gene_mean", "chromosome")] %>%
+  group_by(chromosome) %>%
+  summarize(chr_mean = mean(gene_mean, na.rm = TRUE))
+
+min_rpkm <- min(summary_df[["chr_mean"]])
+summary_df[["chr_mean"]] <- summary_df[["chr_mean"]] / min_rpkm
+ggplot(summary_df, aes(y = chromosome, x = chr_mean)) +
+  geom_col(position = "identity")
+
+wanted <- pData(lp_wanted)[["knnv2classification"]] == "z22" | pData(lp_wanted)[["knnv2classification"]] == "z23"
+lp_z <- lp_wanted[, wanted]
+z22_samples <- pData(lp_z)[["knnv2classification"]] == "z22"
+z23_samples <- pData(lp_z)[["knnv2classification"]] == "z23"
+lp_z_exprs <- as.data.frame(exprs(lp_z))
+lp_z_exprs[["z22_gene_mean"]] <- rowMeans(lp_z_exprs[, z22_samples], na.rm = TRUE)
+lp_z_exprs[["z23_gene_mean"]] <- rowMeans(lp_z_exprs[, z23_samples], na.rm = TRUE)
+lp_z_exprs[["chromosome"]] <- fData(lp_z)[["chromosome"]]
+lp_z_means <- lp_z_exprs[, c("z22_gene_mean", "z23_gene_mean", "chromosome")] %>%
+  group_by(chromosome) %>%
+  summarize(z22_mean = mean(z22_gene_mean, na.rm = TRUE),
+            z23_mean = mean(z23_gene_mean, na.rm = TRUE))
+
+tt <- reshape2::melt(lp_z_means, id.vars = "chromosome")
+ggplot(tt, aes(x = value, y = chromosome)) +
+  geom_bar(aes(fill = variable), position = "dodge", stat = "identity")
+```
+
+# Save all data structures into one rda
+
+```{r}
+found_idx <- data_structures %in% ls()
+if (sum(!found_idx) > 0) {
+  not_found <- data_structures[!found_idx]
+  warning("Some datastructures were not generated: ", toString(not_found), ".")
+  data_structures <- data_structures[found_idx]
+}
+save(list = data_structures, file = glue("rda/tmrc2_data_structures-v{ver}.rda"))
+```
+
+```{r}
+pander::pander(sessionInfo())
+message("This is hpgltools commit: ", get_git_commit())
+message("Saving to ", savefile)
+# tmp <- sm(saveme(filename = savefile))
+```
+
+```{r loadme_after, eval=FALSE}
+tmp <- loadme(filename = savefile)
+```

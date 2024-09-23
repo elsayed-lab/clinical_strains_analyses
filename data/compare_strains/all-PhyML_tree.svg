@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" 
+"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg width="651px" height="470px" viewBox="0 0 651 470"
+xmlns="http://www.w3.org/2000/svg" version="1.1">
+<rect x="0" y="0" width="651" height="470" fill="none" stroke="rgb(192,192,192)" stroke-width="1"/>
+<text x="390" y="466" font-family="Times" font-size="12" xml:space="preserve"  fill="rgb(0,0,0)" textLength="98">z23_zymodemes</text>
+<text x="485" y="358" font-family="Times" font-size="12" xml:space="preserve"  fill="rgb(0,0,0)" textLength="98">z24_zymodemes</text>
+<text x="389" y="251" font-family="Times" font-size="12" xml:space="preserve"  fill="rgb(0,0,0)" textLength="98">z21_zymodemes</text>
+<text x="485" y="143" font-family="Times" font-size="12" xml:space="preserve"  fill="rgb(0,0,0)" textLength="98">z22_zymodemes</text>
+<text x="425" y="35" font-family="Times" font-size="12" xml:space="preserve"  fill="rgb(0,0,0)" textLength="217">lpanamensis_reference_zymodemes</text>
+<text x="314" y="81" font-family="Times" font-size="12" xml:space="preserve"  fill="rgb(0,0,0)" textLength="16">91</text>
+<text x="15" y="291" font-family="Times" font-size="12" xml:space="preserve"  fill="rgb(0,0,0)" textLength="24">100</text>
+<line x1="314" y1="461" x2="387" y2="461" style="stroke:rgb(0,0,0);stroke-width:1;stroke-linecap:butt" />
+<line x1="314" y1="353" x2="482" y2="353" style="stroke:rgb(0,0,0);stroke-width:1;stroke-linecap:butt" />
+<line x1="314" y1="461" x2="314" y2="353" style="stroke:rgb(0,0,0);stroke-width:1;stroke-linecap:butt" />
+<line x1="422" y1="138" x2="482" y2="138" style="stroke:rgb(0,0,0);stroke-width:1;stroke-linecap:butt" />
+<line x1="422" y1="30" x2="422" y2="30" style="stroke:rgb(0,0,0);stroke-width:1;stroke-linecap:butt" />
+<line x1="422" y1="138" x2="422" y2="30" style="stroke:rgb(0,0,0);stroke-width:1;stroke-linecap:butt" />
+<line x1="314" y1="246" x2="387" y2="246" style="stroke:rgb(0,0,0);stroke-width:1;stroke-linecap:butt" />
+<line x1="314" y1="84" x2="422" y2="84" style="stroke:rgb(0,0,0);stroke-width:1;stroke-linecap:butt" />
+<line x1="314" y1="246" x2="314" y2="84" style="stroke:rgb(0,0,0);stroke-width:1;stroke-linecap:butt" />
+<line x1="12" y1="407" x2="314" y2="407" style="stroke:rgb(0,0,0);stroke-width:1;stroke-linecap:butt" />
+<line x1="12" y1="165" x2="314" y2="165" style="stroke:rgb(0,0,0);stroke-width:1;stroke-linecap:butt" />
+<line x1="12" y1="407" x2="12" y2="165" style="stroke:rgb(0,0,0);stroke-width:1;stroke-linecap:butt" />
+<text x="7" y="17" font-family="Times" font-size="12" xml:space="preserve"  fill="rgb(0,0,0)" textLength="402">PhyML ln(L)=-10712.4 7701 sites GTR 104 replic. 4 rate classes</text>
+<line x1="572" y1="13" x2="618" y2="13" style="stroke:rgb(0,0,0);stroke-width:1;stroke-linecap:butt" />
+<line x1="572" y1="17" x2="572" y2="9" style="stroke:rgb(0,0,0);stroke-width:1;stroke-linecap:butt" />
+<line x1="618" y1="17" x2="618" y2="9" style="stroke:rgb(0,0,0);stroke-width:1;stroke-linecap:butt" />
+<text x="573" y="11" font-family="Times" font-size="12" xml:space="preserve"  fill="rgb(0,0,0)" textLength="44">0.0001</text>
+</svg>
